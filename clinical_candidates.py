@@ -35,17 +35,21 @@ def collect(records, client, offset, count, output_dir):
     stats = {}
     with outfile.open('w', encoding='utf-8') as out, auditfile.open('w', newline='', encoding='utf-8-sig') as csvfile:
         columns = ['id', 'status', 'trade_name_en', 'scientific_name', 'score', 'source',
-                   'label_effective_time', 'reason', 'suggested_fields']
+                   'label_effective_time', 'reason', 'suggested_fields', 'reference_fields',
+                   'label_brand', 'label_routes', 'route_conflict']
         writer = csv.DictWriter(csvfile, fieldnames=columns)
         writer.writeheader()
         for idx, rec in enumerate(chosen, 1):
             data = propose(rec, client, 110)
             is_candidate = strict_candidate(data)
             if not is_candidate:
-                # Never export unsafe/ambiguous or incomplete label text as trusted proposals.
+                # Keep exact-ingredient US label information as REFERENCE ONLY,
+                # never as a product-specific suggestion or confirmed clinical field.
                 data['suggestions'] = {}
             status = 'CANDIDATE_REQUIRES_PHARMACIST_REVIEW' if is_candidate else data.get('status','unknown')
-            if not is_candidate and data.get('status') == 'draft_suggestions':
+            if not is_candidate and data.get('reference_fields'):
+                status = 'INGREDIENT_REFERENCE_ONLY_NOT_PRODUCT_MATCH'
+            elif not is_candidate and data.get('status') == 'draft_suggestions':
                 status = 'REJECTED_AMBIGUOUS_MATCH'
             data['status'] = status
             data['clinical_use_allowed'] = False
@@ -61,6 +65,10 @@ def collect(records, client, offset, count, output_dir):
                 'label_effective_time': data.get('label_effective_time'),
                 'reason': data.get('note'),
                 'suggested_fields': ';'.join(data.get('suggestions',{}).keys()),
+                'reference_fields': ';'.join(data.get('reference_fields',{}).keys()),
+                'label_brand': ';'.join(map(str, data.get('us_label_brand_names', []))),
+                'label_routes': ';'.join(map(str, data.get('us_label_routes', []))),
+                'route_conflict': data.get('route_conflict', ''),
             })
             stats[status] = stats.get(status, 0) + 1
             if idx % 10 == 0 or idx == len(chosen):
@@ -72,7 +80,8 @@ def collect(records, client, offset, count, output_dir):
         'source_api': 'https://api.fda.gov/drug/label.json',
         'warnings': ['USA labels may not represent Egyptian brands or authorizations',
                      'Matching does not establish clinical correctness or dosing suitability',
-                     'Combination products and uncertain matches intentionally skipped'],
+                     'Combination products and uncertain matches intentionally skipped',
+                     'INGREDIENT_REFERENCE_ONLY is NOT product-level matching. It must not be copied into the 96-field dataset without professional verification'],
     },ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     if stats.get('api_error', 0) == len(chosen):
         raise ValueError('All API lookups failed: clinical candidate run must NOT be treated as success')

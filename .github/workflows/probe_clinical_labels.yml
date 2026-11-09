@@ -1,4 +1,4 @@
-name: Probe official clinical-label references (REVIEW ONLY)
+name: Probe interactions and adverse reactions (REVIEW ONLY)
 
 on:
   push:
@@ -74,14 +74,21 @@ jobs:
           rows = [json.loads(line) for line in (root / 'clinical_label_candidates_REVIEW.jsonl').read_text(encoding='utf-8').splitlines()]
           assert rows and len(rows) == summary['attempted']
           assert all(r['clinical_use_allowed'] is False and r['review_required'] is True for r in rows)
+          assert all(not (set(r.get('suggestions', {})) & {'side_effects_common', 'side_effects_serious'}) for r in rows)
+          assert all(not r.get('safety_review') or r['safety_review']['auto_populated_pharmacy_fields'] == [] for r in rows)
+          templates = json.loads((root / 'medical_safety_review_TEMPLATE.json').read_text(encoding='utf-8'))
+          assert all(x['approved'] is False and x['reviewed_fields']['side_effects_serious'] == '' for x in templates)
+          assert all(set(('interactions_summary', 'side_effects_common', 'side_effects_serious')) <= set(x['reviewed_fields']) for x in templates)
           assert all(r['status'] != 'CANDIDATE_REQUIRES_PHARMACIST_REVIEW' or r.get('suggestions') for r in rows)
           print('REVIEW-ONLY LABEL RESULTS:', summary['counts'])
+          print('RAW SAFETY SECTIONS:', summary['safety_label_coverage'])
+          print('UNAPPROVED REVIEW TEMPLATES:', len(templates))
           PY
       - name: Upload source summaries and actual FDA/RxNorm research-only output
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: clinical-label-probe-REVIEW-ONLY
+          name: clinical-safety-probe-REVIEW-ONLY
           path: |
             clinical_probe_input.json
             clinical_probe_results/

@@ -1,0 +1,99 @@
+name: Fast multilingual drug research - catalog and official sources
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fast_drug_research.yml'
+  workflow_dispatch:
+    inputs:
+      query:
+        description: 'Search Arabic or English drug name, ingredient, strength, barcode, ID'
+        type: string
+        default: 'metformin'
+        required: true
+      max_records:
+        description: 'Distinct catalog products to research against official sources'
+        type: choice
+        options: ['3', '5', '10', '20']
+        default: '5'
+        required: true
+      official_sources:
+        description: 'Search RxNorm, openFDA and DailyMed (review only)'
+        type: boolean
+        default: true
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fast-drug-research-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  researcher:
+    name: Benchmark full catalog and lookup official references
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run offline regression tests
+        run: python -m unittest discover -s tests -v
+      - name: Convert full upstream source into temporary catalog
+        run: |
+          python convert.py --download --sample 0 \
+            --include-catalog-details \
+            --expected-min-rows 20000 --output-dir catalog_temp
+      - name: Benchmark indexed multilingual retrieval
+        env:
+          QUERY: ${{ inputs.query || 'metformin' }}
+        run: |
+          python fast_search.py \
+            --input catalog_temp/drugs_96_DRAFT.json \
+            --query "$QUERY" \
+            --limit 10 \
+            --benchmark --benchmark-count 250 \
+            --output research_output/catalog_search_and_benchmark.json
+      - name: Search official sources with bounded parallelism and caching
+        if: ${{ github.event_name == 'push' || inputs.official_sources }}
+        env:
+          QUERY: ${{ inputs.query || 'metformin' }}
+          MAX_RECORDS: ${{ inputs.max_records || '5' }}
+        run: |
+          python research_batch.py \
+            --input catalog_temp/drugs_96_DRAFT.json \
+            --query "$QUERY" \
+            --max-records "$MAX_RECORDS" \
+            --workers 2 \
+            --cache-dir .research_cache \
+            --output research_output/medical_sources_REVIEW_ONLY.json
+      - name: Ensure medical evidence remains research only
+        if: ${{ github.event_name == 'push' || inputs.official_sources }}
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path('research_output/medical_sources_REVIEW_ONLY.json').read_text(encoding='utf-8'))
+          rows = result['drugs']
+          assert result['clinical_use_allowed'] is False
+          assert all(r['clinical_use_allowed'] is False for r in rows)
+          assert all(r['fda_label_is_verified_egyptian_product'] is False for r in rows)
+          assert all(r['auto_merged_into_json_batches'] is False for r in rows)
+          assert all(r['review_required'] is True for r in rows)
+          assert len({r['id'] for r in rows}) == len(rows)
+          print('VALIDATED:', len(rows), 'product references,',
+                result['unique_ingredient_queries'], 'deduplicated ingredients')
+          PY
+      - name: Upload researcher JSON reports only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fast-drug-research-REVIEW-ONLY
+          path: research_output/*.json
+          if-no-files-found: warn
+          retention-days: 14

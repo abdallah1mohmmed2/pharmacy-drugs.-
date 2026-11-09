@@ -125,7 +125,10 @@ def numeric_strength_in_label(strength, label):
     compact = blocks.casefold().replace(",", ".")
     compact = compact.replace("i.u.", "iu").replace("µg", "mcg").replace("ug", "mcg")
     compact = re.sub(r"\s+", "", compact)
-    return strength in compact
+    # Prevent 10mg from being treated as equal to 110mg or 10mgx:
+    # these are not the same label strength.
+    return bool(re.search(r"(?<![0-9a-z])" + re.escape(strength) +
+                          r"(?![0-9a-z])", compact))
 
 
 def nonempty(value):

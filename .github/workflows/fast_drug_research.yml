@@ -121,6 +121,37 @@ jobs:
           print('VALIDATED:', len(rows), 'product references,',
                 result['unique_ingredient_queries'], 'deduplicated ingredients')
           PY
+      - name: Compare original converted drugs with official research evidence
+        if: ${{ github.event_name == 'push' || inputs.official_sources }}
+        run: |
+          python compare_research.py \
+            --catalog catalog_temp/drugs_96_DRAFT.json \
+            --research research_output/medical_sources_REVIEW_ONLY.json \
+            --output research_output/comparison_REVIEW_ONLY.json \
+            --review-template research_output/product_review_NOT_APPROVED.json
+      - name: Validate comparison, identity preservation and review-only gate
+        if: ${{ github.event_name == 'push' || inputs.official_sources }}
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          converted = json.loads(Path('catalog_temp/drugs_96_DRAFT.json').read_text(encoding='utf-8'))
+          research = json.loads(Path('research_output/medical_sources_REVIEW_ONLY.json').read_text(encoding='utf-8'))
+          report = json.loads(Path('research_output/comparison_REVIEW_ONLY.json').read_text(encoding='utf-8'))
+          templates = json.loads(Path('research_output/product_review_NOT_APPROVED.json').read_text(encoding='utf-8'))
+          assert report['catalog_records'] == len(converted)
+          assert report['compared_records'] == len(research['drugs'])
+          assert report['automatic_merge_allowed'] is False
+          assert len({r['id'] for r in report['results']}) == len(report['results'])
+          assert all(r['automatic_merge_allowed'] is False and r['catalog_unchanged'] is True
+                     for r in report['results'])
+          assert all(t['approved'] is False and all(v == '' for v in t['reviewed_fields'].values())
+                     for t in templates)
+          assert all(r['is_active'] == 0 for r in converted)
+          print('COMPARATOR CONNECTED:', len(report['results']), 'drugs,',
+                len(templates), 'unapproved review templates,',
+                'identity discrepancies:',report['counts'].get('REJECTED_IDENTITY_MISMATCH',0))
+          PY
       - name: Upload researcher JSON reports only
         if: always()
         uses: actions/upload-artifact@v4

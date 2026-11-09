@@ -33,10 +33,14 @@ def collect(records, client, offset, count, output_dir):
     outfile = output_dir / 'clinical_label_candidates_REVIEW.jsonl'
     auditfile = output_dir / 'clinical_label_audit.csv'
     stats = {}
+    safety_counts = {key: 0 for key in ('interaction_sources', 'adverse_sources', 'warnings_sources', 'common_heading_cues', 'serious_heading_cues')}
+    review_templates = []
     with outfile.open('w', encoding='utf-8') as out, auditfile.open('w', newline='', encoding='utf-8-sig') as csvfile:
         columns = ['id', 'status', 'trade_name_en', 'scientific_name', 'score', 'source',
                    'label_effective_time', 'reason', 'suggested_fields', 'reference_fields',
-                   'label_brand', 'label_routes', 'route_conflict', 'unclassified_sections']
+                   'label_brand', 'label_routes', 'route_conflict', 'unclassified_sections',
+                   'interaction_source', 'adverse_source', 'warnings_source',
+                   'common_heading_cues', 'serious_heading_cues']
         writer = csv.DictWriter(csvfile, fieldnames=columns)
         writer.writeheader()
         for idx, rec in enumerate(chosen, 1):
@@ -52,6 +56,37 @@ def collect(records, client, offset, count, output_dir):
             elif not is_candidate and data.get('status') == 'draft_suggestions':
                 status = 'REJECTED_AMBIGUOUS_MATCH'
             data['status'] = status
+            safety = data.get('safety_review') or {}
+            sections = safety.get('sections') or {}
+            targets = safety.get('review_targets') or {}
+            interaction_source = sections.get('drug_interactions') or sections.get('drug_interactions_table') or {}
+            adverse_source = sections.get('adverse_reactions') or sections.get('adverse_reactions_table') or {}
+            warnings_source = sections.get('warnings_and_cautions') or sections.get('boxed_warning') or {}
+            common_cues = (targets.get('side_effects_common') or {}).get('wording_cues') or []
+            serious_cues = (targets.get('side_effects_serious') or {}).get('wording_cues') or []
+            safety_counts['interaction_sources'] += bool(interaction_source)
+            safety_counts['adverse_sources'] += bool(adverse_source)
+            safety_counts['warnings_sources'] += bool(warnings_source)
+            safety_counts['common_heading_cues'] += bool(common_cues)
+            safety_counts['serious_heading_cues'] += bool(serious_cues)
+            if sections:
+                # A non-approved template. A pharmacist must check the exact
+                # marketed product and replace placeholders. Empty fields must be removed.
+                identifiers = ('id', 'uuid', 'trade_name_en', 'scientific_name',
+                               'strength_text', 'dosage_form', 'route')
+                review_templates.append({
+                    **{key: rec.get(key) for key in identifiers},
+                    'approved': False,
+                    'reviewed_by': '',
+                    'review_date': '',
+                    'source_url': data.get('source', ''),
+                    'reviewed_fields': {
+                        'interactions_summary': '',
+                        'side_effects_common': '',
+                        'side_effects_serious': '',
+                    },
+                    '_INSTRUCTIONS': 'Review the exact product leaflet; delete blank fields; verify all identity fields; set approved true only after pharmacist review; remove _INSTRUCTIONS before use.',
+                })
             data['clinical_use_allowed'] = False
             data['source_country'] = 'US label — may differ from Egyptian brand authorization'
             data['review_required'] = True
@@ -70,20 +105,30 @@ def collect(records, client, offset, count, output_dir):
                 'label_routes': ';'.join(map(str, data.get('us_label_routes', []))),
                 'route_conflict': data.get('route_conflict', ''),
                 'unclassified_sections': ';'.join(data.get('unclassified_label_sections', {}).keys()),
+                'interaction_source': interaction_source.get('source_field', ''),
+                'adverse_source': adverse_source.get('source_field', ''),
+                'warnings_source': warnings_source.get('source_field', ''),
+                'common_heading_cues': ';'.join(common_cues),
+                'serious_heading_cues': ';'.join(serious_cues),
             })
             stats[status] = stats.get(status, 0) + 1
             if idx % 10 == 0 or idx == len(chosen):
                 print(f'Clinical candidates: {idx}/{len(chosen)} (offset {offset})',flush=True)
+    (output_dir / 'medical_safety_review_TEMPLATE.json').write_text(
+        json.dumps(review_templates, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     (output_dir / 'clinical_label_summary.json').write_text(json.dumps({
         'status': 'REVIEW_ONLY_NOT_CLINICALLY_VALIDATED',
         'input_rows': len(records), 'offset': offset, 'attempted': len(chosen),
-        'counts': stats, 'may_apply_to_database_automatically': False,
+        'counts': stats, 'safety_label_coverage': safety_counts,
+        'medical_review_templates': len(review_templates),
+        'may_apply_to_database_automatically': False,
         'source_api': 'https://api.fda.gov/drug/label.json',
         'warnings': ['USA labels may not represent Egyptian brands or authorizations',
                      'Matching does not establish clinical correctness or dosing suitability',
                      'Combination products and uncertain matches intentionally skipped',
                      'INGREDIENT_REFERENCE_ONLY is NOT product-level matching. It must not be copied into the 96-field dataset without professional verification',
-                     'Adverse reactions remain unclassified; do not automatically label them common or serious'],
+                     'Adverse reactions remain unclassified; do not automatically label them common or serious',
+                     'The medical_safety_review_TEMPLATE.json intentionally has approved=false and blank fields: only a qualified pharmacist may fill it from the exact product leaflet'],
     },ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     if stats.get('api_error', 0) == len(chosen):
         raise ValueError('All API lookups failed: clinical candidate run must NOT be treated as success')

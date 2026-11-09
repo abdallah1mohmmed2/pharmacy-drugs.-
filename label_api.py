@@ -165,14 +165,16 @@ def classify_label(target, label):
     brand_match = bool(trade_brand and trade_brand in brands)
     routes = {squish(x).upper() for x in as_list(of.get("route") or label.get("route"))}
     expected = expected_routes(target.get("trade_name_en"))
-    if expected and routes and not expected.intersection(routes):
-        return None
+    route_conflict = bool(expected and routes and not expected.intersection(routes))
     route_match = bool(expected and routes and expected.intersection(routes))
     s = strength_token(target.get("trade_name_en") or target.get("strength_text"))
     strength_match = numeric_strength_in_label(s, label)
     score = generic_score + (20 if brand_match else 0) + (10 if route_match else 0) + (10 if strength_match else 0)
+    if route_conflict:
+        score -= 30  # Can only be an ingredient-level reference, never a product label
     return {"score": score, "identity": identity, "brand_match": brand_match,
-            "route_match": route_match, "strength_match": strength_match,
+            "route_match": route_match, "route_conflict": route_conflict,
+            "strength_match": strength_match,
             "label": label, "effective_time": str(label.get("effective_time", ""))}
 
 
@@ -247,7 +249,8 @@ def propose(record, api, minimum):
     brand = record.get("trade_name_en", "")
     meta = {"id": record.get("id", ""), "trade_name_en": brand,
             "scientific_name": record.get("scientific_name", ""), "status": "", "score": 0,
-            "rxnorm_ids": [], "source": "", "selected_fields": [], "suggestions": {}, "note": ""}
+            "rxnorm_ids": [], "source": "", "selected_fields": [], "suggestions": {},
+            "reference_fields": {}, "note": ""}
     if not ingredient:
         meta["status"] = "skip_complex_or_missing_ingredient"
         return meta
@@ -272,13 +275,18 @@ def propose(record, api, minimum):
     meta["identity"] = chosen["identity"]
     meta["brand_match"] = chosen["brand_match"]
     meta["route_match"] = chosen["route_match"]
+    meta["route_conflict"] = chosen["route_conflict"]
     meta["strength_match"] = chosen["strength_match"]
     meta["label_effective_time"] = chosen["effective_time"]
+    openfda = label.get("openfda") or {}
+    meta["us_label_brand_names"] = as_list(openfda.get("brand_name"))
+    meta["us_label_generic_names"] = as_list(openfda.get("generic_name"))
+    meta["us_label_routes"] = as_list(openfda.get("route") or label.get("route"))
     meta["same_score_candidates"] = sum(1 for x in candidates if x["score"] == chosen["score"])
     set_id = str(label.get("set_id", ""))
     meta["source"] = ("https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=" + set_id
                       if set_id else "https://open.fda.gov/apis/drug/label/")
-    if chosen["score"] < minimum or chosen["identity"] != "exact_ingredient":
+    if chosen["identity"] != "exact_ingredient":
         meta["status"] = "match_needs_manual_verification"
         return meta
     for dest, src_fields in FIELD_MAP.items():
@@ -286,7 +294,13 @@ def propose(record, api, minimum):
             proposal = ("; ".join(map(squish, as_list((label.get("openfda") or {}).get("pharm_class_epc"))))
                         if dest == "pharmacologic_class" else label_text(label, src_fields))
             if proposal:
-                meta["suggestions"][dest] = proposal
-    meta["selected_fields"] = list(meta["suggestions"])
-    meta["status"] = "draft_suggestions" if meta["suggestions"] else "matched_nothing_missing"
+                # Even exact ingredients may be different formulations/markets. The
+                # reference is only an English-language research aid, NOT drug data.
+                meta["reference_fields"][dest] = proposal
+    if chosen["score"] >= minimum and not chosen["route_conflict"]:
+        meta["suggestions"] = dict(meta["reference_fields"])
+        meta["selected_fields"] = list(meta["suggestions"])
+        meta["status"] = "draft_suggestions" if meta["suggestions"] else "matched_nothing_missing"
+    else:
+        meta["status"] = "ingredient_reference_only" if meta["reference_fields"] else "matched_nothing_missing"
     return meta

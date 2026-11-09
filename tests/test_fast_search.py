@@ -114,7 +114,7 @@ class ResearchPipelineTests(unittest.TestCase):
 
     def test_dedup_one_ingredient_for_multiple_strengths(self):
         look = StaticLookup()
-        result = research(self.index, ["Glucophage"], max_records=3, workers=2,
+        result = research(self.index, ["metformin hydrochloride"], max_records=3, workers=2,
                           cache_dir=Path("/tmp/no-network-needed"), lookup=look)
         self.assertEqual(result["researched_drugs"], 3)
         self.assertEqual(result["unique_ingredient_queries"], 1)
@@ -128,7 +128,7 @@ class ResearchPipelineTests(unittest.TestCase):
 
     def test_queries_do_not_mix_different_products(self):
         look = StaticLookup()
-        result = research(self.index, ["Glucophage", "Atorvastatin"], max_records=4,
+        result = research(self.index, ["metformin hydrochloride", "Atorvastatin"], max_records=4,
                           workers=2, lookup=look)
         self.assertEqual(result["researched_drugs"], 4)
         self.assertEqual(len({r["uuid"] for r in result["drugs"]}),4)

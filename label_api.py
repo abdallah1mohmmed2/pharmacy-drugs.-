@@ -17,6 +17,7 @@ import re
 import sqlite3
 import sys
 import time
+from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -24,6 +25,7 @@ from safety_sections import safety_review_bundle
 
 FDA_URL = "https://api.fda.gov/drug/label.json"
 RXNORM_URL = "https://rxnav.nlm.nih.gov/REST/rxcui.json"
+CACHE_TTL_SECONDS = 14 * 24 * 3600  # Refetch changed US labels; reuse only recent API results.
 
 # These are free text descriptions, NOT clinical decision-making flags or dose limits.
 FIELD_MAP = {
@@ -192,7 +194,7 @@ class APIClient:
         cache_params = dict(params)
         canonical = url + "?" + urlencode(sorted(cache_params.items()))
         fname = self.cache_dir / (hashlib.sha256(canonical.encode("utf-8")).hexdigest() + ".json")
-        if fname.exists():
+        if fname.exists() and time.time() - fname.stat().st_mtime < CACHE_TTL_SECONDS:
             try:
                 return json.loads(fname.read_text(encoding="utf-8"))
             except (ValueError, OSError):
@@ -211,11 +213,16 @@ class APIClient:
                                                  "Accept": "application/json"})
                 with urlopen(req, timeout=30) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
-                fname.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                # Atomic replace prevents partially written cache entries on interruption.
+                tmp = fname.with_name(fname.name + '.tmp')
+                tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                tmp.replace(fname)
                 return data
             except HTTPError as exc:
                 if exc.code == 404:
-                    fname.write_text("null", encoding="utf-8")
+                    tmp = fname.with_name(fname.name + '.tmp')
+                    tmp.write_text("null", encoding="utf-8")
+                    tmp.replace(fname)
                     return None
                 if exc.code not in (429, 500, 502, 503, 504):
                     raise RuntimeError(f"HTTP {exc.code} from {url}") from exc

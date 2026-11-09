@@ -32,7 +32,8 @@ FIELD_MAP = {
     "warnings_precautions": ("warnings_and_cautions", "warnings", "precautions"),
     "black_box_warning": ("boxed_warning",),
     "interactions_summary": ("drug_interactions",),
-    "side_effects_common": ("adverse_reactions",),
+    # "adverse_reactions" combines frequencies and serious events; NEVER
+    # misclassify its entire section as side_effects_common.
     "pregnancy_notes": ("pregnancy", "pregnancy_or_breast_feeding"),
     "lactation_notes": ("lactation", "nursing_mothers"),
     "pediatric_notes": ("pediatric_use",),
@@ -250,7 +251,7 @@ def propose(record, api, minimum):
     meta = {"id": record.get("id", ""), "trade_name_en": brand,
             "scientific_name": record.get("scientific_name", ""), "status": "", "score": 0,
             "rxnorm_ids": [], "source": "", "selected_fields": [], "suggestions": {},
-            "reference_fields": {}, "note": ""}
+            "reference_fields": {}, "unclassified_label_sections": {}, "note": ""}
     if not ingredient:
         meta["status"] = "skip_complex_or_missing_ingredient"
         return meta
@@ -297,10 +298,13 @@ def propose(record, api, minimum):
                 # Even exact ingredients may be different formulations/markets. The
                 # reference is only an English-language research aid, NOT drug data.
                 meta["reference_fields"][dest] = proposal
+    adverse_text = label_text(label, ("adverse_reactions",))
+    if adverse_text:
+        meta["unclassified_label_sections"]["adverse_reactions"] = adverse_text
     if chosen["score"] >= minimum and not chosen["route_conflict"]:
         meta["suggestions"] = dict(meta["reference_fields"])
         meta["selected_fields"] = list(meta["suggestions"])
         meta["status"] = "draft_suggestions" if meta["suggestions"] else "matched_nothing_missing"
     else:
-        meta["status"] = "ingredient_reference_only" if meta["reference_fields"] else "matched_nothing_missing"
+        meta["status"] = "ingredient_reference_only" if (meta["reference_fields"] or meta["unclassified_label_sections"]) else "matched_nothing_missing"
     return meta

@@ -66,6 +66,30 @@ jobs:
             --limit 10 \
             --benchmark --benchmark-count 250 \
             --output research_output/catalog_search_and_benchmark.json
+      - name: Build persistent SQLite FTS5 search index for the converted catalog
+        run: |
+          python fast_drug_search.py \
+            --build-from catalog_temp/drugs_96_DRAFT.json \
+            --index research_index.sqlite3
+      - name: Search with ranked BM25 and fuzzy Arabic-English candidates
+        env:
+          QUERY: ${{ inputs.query || 'metformin' }}
+        run: |
+          python fast_drug_search.py \
+            --index research_index.sqlite3 \
+            --query "$QUERY" --limit 20 \
+            > research_output/fts5_ranked_search.json
+      - name: Check unique IDs and no product-equivalence claims
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('research_output/fts5_ranked_search.json').read_text(encoding='utf-8'))
+          rows = data['results']
+          assert len({r['id'] for r in rows}) == len(rows)
+          assert all(r['clinical_equivalence_verified'] is False for r in rows)
+          print('FTS5 ranked results:',len(rows))
+          PY
       - name: Search official sources with bounded parallelism and caching
         if: ${{ github.event_name == 'push' || inputs.official_sources }}
         env:

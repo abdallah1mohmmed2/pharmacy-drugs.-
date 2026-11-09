@@ -15,8 +15,8 @@ from typing import Any
 
 from convert import load_schema
 
-MAX_DRUGS_PER_FILE = 5000
-MAX_ARTIFACTS = 16
+MAX_DRUGS_PER_FILE = 1000
+MAX_ARTIFACTS = 64
 
 
 def valid_record_id(record: dict[str, Any]) -> int:
@@ -39,7 +39,7 @@ def partition_records(
     duplicate IDs/UUIDs cause a hard error instead of silent data loss.
     """
     if type(batch_size) is not int or not 1 <= batch_size <= MAX_DRUGS_PER_FILE:
-        raise ValueError("batch_size must be an integer between 1 and 5000")
+        raise ValueError("batch_size must be an integer between 1 and 1000")
     if not isinstance(records, list) or not records:
         raise ValueError("The converted JSON must be a nonempty array")
     total = len(records)
@@ -110,7 +110,7 @@ def partition_records(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Split converted drugs into JSON-only artifacts (<= 5000 each)")
+    parser = argparse.ArgumentParser(description="Split converted drugs into JSON-only artifacts (<= 1000 each)")
     parser.add_argument("--input", required=True, help="Path to converter's drugs_96_DRAFT.json")
     parser.add_argument("--output-dir", default="json_batches", help="New directory containing only batch_NN.json")
     parser.add_argument("--batch-size", type=int, default=5000)

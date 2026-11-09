@@ -1,0 +1,16 @@
+[
+  {
+    "id": 1,
+    "name": "concor 10mg 30 tablets",
+    "arabic": "كونكور 10 مجم 30 قرص",
+    "active": "bisoprolol fumarate",
+    "company": "Example Company",
+    "price": "99",
+    "oldprice": "70.5",
+    "barcode": "6221000003295",
+    "barcode_valid": "1",
+    "units": "3",
+    "description": "antihypertensive.beta blocker",
+    "uses": "ارتفاع ضغط الدم"
+  }
+]

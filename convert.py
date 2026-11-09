@@ -19,6 +19,7 @@ import tempfile
 import uuid
 from urllib.request import urlopen, Request
 from urllib.error import HTTPError, URLError
+from product_name_parser import product_name_fields
 
 SOURCE_URL = 'https://raw.githubusercontent.com/mahmoudfalous/eg-drugs/main/data/eg_drugs.json'
 REPO_URL = 'https://github.com/mahmoudfalous/eg-drugs'
@@ -36,7 +37,7 @@ RISK_FLAGS = [
     'prescription_restricted', 'has_critical_interactions',
     'is_nephrotoxic', 'neonate_allowed', 'requires_refrigeration', 'protect_from_light',
 ]
-SCHEMA_VERSION = 'v2.0'
+SCHEMA_VERSION = 'v2.1'
 MAX_FILE_BYTES = 150 * 1024 * 1024
 
 
@@ -196,6 +197,7 @@ def convert(records, defaults, output_dir, source_sha, source_git_sha,
     gtin_unverified = 0
     missing_ingredient = 0
     mapped_counts = {v: 0 for v in TEXT_MAPPING.values()}
+    parsed_counts = {name: 0 for name in ('dosage_form', 'route', 'strength_text', 'strength_value', 'strength_unit')}
     now = datetime.now(timezone.utc).isoformat(timespec='seconds')
     seen_ids = set()
 
@@ -205,7 +207,8 @@ def convert(records, defaults, output_dir, source_sha, source_git_sha,
         writer = csv.DictWriter(f_audit, fieldnames=[
             'source_row', 'id', 'trade_name_en', 'scientific_name',
             'copied_fields', 'barcode', 'barcode_status', 'source_price_egp',
-            'source_company', 'unverified_safety_fields', 'requires_clinical_review'
+            'source_company', 'name_derived_fields', 'name_derived_evidence_json',
+            'unverified_safety_fields', 'requires_clinical_review'
         ])
         writer.writeheader()
         f_out.write('[\n')
@@ -231,6 +234,12 @@ def convert(records, defaults, output_dir, source_sha, source_git_sha,
                     record[dst] = val
                     copied.append(f'{orig}->{dst}')
                     mapped_counts[dst] += 1
+            # Product NAME evidence is not equivalent to authoritative clinical guidance.
+            # Strict parser refuses combination strengths and ambiguous ratio/concentrations.
+            derived, evidence = product_name_fields(source.get('name'), source.get('active'))
+            record.update(derived)
+            for field in derived:
+                parsed_counts[field] += 1
             if not record['scientific_name']:
                 missing_ingredient += 1
             barcode = safe_text(source.get('barcode'))
@@ -256,6 +265,8 @@ def convert(records, defaults, output_dir, source_sha, source_git_sha,
                 'barcode': barcode, 'barcode_status': barcode_status,
                 'source_price_egp': safe_text(source.get('price')),
                 'source_company': safe_text(source.get('company')),
+                'name_derived_fields': ';'.join(derived.keys()),
+                'name_derived_evidence_json': json.dumps(evidence, ensure_ascii=False),
                 'unverified_safety_fields': ';'.join(RISK_FLAGS),
                 'requires_clinical_review': 'YES',
             })
@@ -290,6 +301,8 @@ def convert(records, defaults, output_dir, source_sha, source_git_sha,
         'barcodes_unverified': gtin_unverified,
         'missing_ingredient': missing_ingredient,
         'mapped_nonempty_counts': mapped_counts,
+        'name_derived_nonempty_counts': parsed_counts,
+        'name_derived_fields_need_human_verification': True,
         'unverified_safety_flags': RISK_FLAGS,
         'not_enriched_clinically': clinical_fields,
         'notes': [
@@ -299,6 +312,8 @@ def convert(records, defaults, output_dir, source_sha, source_git_sha,
             'Source price is EGP, and was intentionally NOT copied into Yemen retail price.',
             'Company is a name, NOT a numeric manufacturer_id; stored in audit/original only.',
             'Source units does not reliably represent tablets per pack; stored in original only.',
+            'Form, route and concentration parsed from product name are provisional catalogue metadata, not confirmed patient instructions.',
+            'Combination strengths and ambiguous concentrations are intentionally not coerced into single strength_value.',
             'Free-text category is copied verbatim, NOT verified as ATC or pharmacological class.',
             'This structural conversion must NOT be used as verified clinical guidance.',
         ],

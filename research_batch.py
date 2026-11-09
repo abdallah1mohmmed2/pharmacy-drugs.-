@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import os
 from pathlib import Path
 import re
 from time import perf_counter
@@ -54,7 +55,7 @@ def daily_med_summary(data: Any, max_results=5) -> list[dict]:
 
 def fetch_references(ingredient: str, cache_dir: Path, delay: float = 1.2):
     """Independent thread-local client avoids mutable timestamp races."""
-    client = APIClient(str(cache_dir), delay=delay)
+    client = APIClient(str(cache_dir), api_key=os.getenv("OPENFDA_API_KEY", ""), delay=delay)
     status = {}
     rx = []
     labels = []
@@ -181,6 +182,7 @@ def research(index: DrugSearchIndex, queries: list[str], max_records: int = 10,
         "unique_ingredient_queries": len(ingredients),
         "deduplicated_ingredient_requests": len(selected) - len(ingredients),
         "parallel_workers": workers,
+        "cache_ttl_days": 14,
         "elapsed_seconds": round(perf_counter() - started, 2),
         "sources": {
             "catalog": "eg-drugs converted JSON",
@@ -189,6 +191,7 @@ def research(index: DrugSearchIndex, queries: list[str], max_records: int = 10,
             "dailymed": DAILYMED_SPLS_URL,
         },
         "clinical_use_allowed": False,
+        "reliability_note": "Source API labels are US market records and do not establish equivalence with an Egyptian product.",
         "statuses": status_counts,
         "drugs": researched,
     }

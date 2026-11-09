@@ -14,6 +14,7 @@ import sys
 from typing import Any
 
 from convert import load_schema
+from catalog_details import DETAIL_EXTRA_KEYS
 
 MAX_DRUGS_PER_FILE = 300
 MAX_ARTIFACTS = 128
@@ -53,13 +54,20 @@ def partition_records(
         raise ValueError(f"Output directory already exists: {output_dir}")
 
     schema_keys = set(load_schema())
+    extended_keys = schema_keys | set(DETAIL_EXTRA_KEYS)
+    seen_format: set[str] | None = None
     unique_ids: set[int] = set()
     unique_uuids: set[str] = set()
     for index, row in enumerate(records, start=1):
         if not isinstance(row, dict):
             raise ValueError(f"Record {index} is not a JSON object")
-        if set(row) != schema_keys:
-            raise ValueError(f"Record {index} is not the expected 96-field converted output")
+        fields = set(row)
+        if fields not in (schema_keys, extended_keys):
+            raise ValueError(f"Record {index} does not match the 96-field core or 98-field extended export")
+        if seen_format is None:
+            seen_format = fields
+        elif seen_format != fields:
+            raise ValueError(f"Record {index} has mixed record fields, refusing to split")
         drug_id = valid_record_id(row)
         if drug_id in unique_ids:
             raise ValueError(f"Duplicate ID {drug_id} at source row {index}")

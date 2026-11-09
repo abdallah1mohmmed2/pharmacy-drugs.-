@@ -119,17 +119,18 @@ def strength_token(value):
 def numeric_strength_in_label(strength, label):
     if not strength:
         return False
-    # Only examine sections that describe product strength, not dose guidance.
-    keys = ("dosage_forms_and_strengths", "active_ingredient", "package_label_principal_display_panel")
+    # Compare complete numeric strength tokens, not arbitrary string substrings.
+    # Only sections describing product strength are examined, never patient
+    # dosing or adverse-reaction text.
+    keys = ("dosage_forms_and_strengths", "active_ingredient",
+            "package_label_principal_display_panel")
     blocks = " ".join(" ".join(str(v) for v in as_list(label.get(k))) for k in keys)
-    compact = blocks.casefold().replace(",", ".")
-    compact = compact.replace("i.u.", "iu").replace("µg", "mcg").replace("ug", "mcg")
-    compact = re.sub(r"\s+", "", compact)
-    # Prevent 10mg from being treated as equal to 110mg or 10mgx:
-    # these are not the same label strength.
-    return bool(re.search(r"(?<![0-9a-z])" + re.escape(strength) +
-                          r"(?![0-9a-z])", compact))
-
+    token = re.compile(
+        r"(?<![a-z0-9])\d+(?:[.,]\d+)?\s*(?:mcg|µg|ug|mg|iu|i\.u\.|%)(?![a-z0-9])",
+        re.IGNORECASE,
+    )
+    detected = {strength_token(m.group()) for m in token.finditer(blocks)}
+    return strength in detected
 
 def nonempty(value):
     return value not in (None, "", [], {}, "UNKNOWN", "null") and str(value).strip() not in ("", "UNKNOWN")

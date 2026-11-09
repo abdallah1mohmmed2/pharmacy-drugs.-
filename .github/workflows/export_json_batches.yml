@@ -1,0 +1,226 @@
+name: Export JSON batches - up to 5000 drugs each
+
+on:
+  # Trigger one initial run when this workflow is first added.
+  push:
+    paths:
+      - '.github/workflows/export_json_batches.yml'
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: 'Drugs per JSON file (never more than 5000)'
+        type: choice
+        options: ['5000', '2500']
+        default: '5000'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: export-json-batches-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  export:
+    name: Convert full source, validate IDs, export JSON-only ZIP artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run automated tests (offline)
+        run: python -m unittest discover -s tests -v
+      - name: Convert all upstream drugs to the established 96-field format
+        run: |
+          python convert.py --download --sample 0 \
+            --expected-min-rows 20000 --output-dir full_catalog
+      - name: Verify the full conversion against the original source count
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('full_catalog')
+          manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
+          rows = json.loads((root / 'drugs_96_DRAFT.json').read_text(encoding='utf-8'))
+          assert manifest['converted_records'] == manifest['source_records_total'] == len(rows)
+          assert not manifest['is_sample']
+          assert all(len(r) == 96 and r['is_active'] == 0 for r in rows)
+          print('Verified full conversion:', len(rows), 'drugs in original order.')
+          PY
+      - name: Split JSON batches and verify zero repeats, no omissions or altered records
+        id: split
+        env:
+          BATCH_SIZE: ${{ inputs.batch_size || '5000' }}
+        run: |
+          python split_artifacts.py \
+            --input full_catalog/drugs_96_DRAFT.json \
+            --output-dir json_batches \
+            --batch-size "$BATCH_SIZE" \
+            --github-output "$GITHUB_OUTPUT"
+      # IMPORTANT: Only json_batches/batch_NN.json are uploaded below. The source
+      # database, original records, manifests, caches and CSV reports stay on
+      # the transient runner, and are NOT included in any ZIP artifact.
+      - name: Upload JSON batch 01 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 1 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-01
+          path: json_batches/batch_01.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 02 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 2 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-02
+          path: json_batches/batch_02.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 03 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 3 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-03
+          path: json_batches/batch_03.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 04 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 4 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-04
+          path: json_batches/batch_04.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 05 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 5 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-05
+          path: json_batches/batch_05.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 06 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 6 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-06
+          path: json_batches/batch_06.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 07 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 7 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-07
+          path: json_batches/batch_07.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 08 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 8 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-08
+          path: json_batches/batch_08.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 09 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 9 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-09
+          path: json_batches/batch_09.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 10 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 10 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-10
+          path: json_batches/batch_10.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 11 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 11 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-11
+          path: json_batches/batch_11.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 12 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 12 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-12
+          path: json_batches/batch_12.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 13 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 13 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-13
+          path: json_batches/batch_13.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 14 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 14 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-14
+          path: json_batches/batch_14.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 15 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 15 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-15
+          path: json_batches/batch_15.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Upload JSON batch 16 (one JSON file, <= 5000 drugs)
+        if: ${{ fromJSON(steps.split.outputs.batch_count) >= 16 }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drugs-96-json-batch-16
+          path: json_batches/batch_16.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6

@@ -1,0 +1,83 @@
+name: Benchmark SQLite FTS5 pharmacy research on full converted catalog
+
+on:
+  push:
+    paths:
+      - '.github/workflows/sqlite_search_benchmark.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: Search accuracy and speed - 27617-plus converted medicines
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run all deterministic regressions
+        run: python -m unittest discover -s tests -v
+      - name: Convert original catalog, preserving the 98-key export shape
+        run: |
+          python convert.py --download --sample 0 --include-catalog-details \
+            --expected-min-rows 20000 --output-dir source_catalog
+      - name: Build persistent SQLite inverted index - full catalog
+        run: |
+          python fast_drug_search.py \
+            --build-from source_catalog/drugs_96_DRAFT.json \
+            --index search.sqlite3
+      - name: Measure search query latency and exact identifier accuracy
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import statistics
+          from time import perf_counter
+          from fast_drug_search import search_index
+          rows = json.loads(Path('source_catalog/drugs_96_DRAFT.json').read_text(encoding='utf-8'))
+          chosen = [rows[i] for i in range(0,len(rows),max(1,len(rows)//60))][:60]
+          assert len(rows) >= 20000
+          elapsed = []
+          checked = 0
+          kinds = {'id': 0, 'barcode': 0, 'brand': 0, 'arabic': 0, 'ingredient': 0}
+          for rec in chosen:
+              cases = [('id',str(rec['id']))]
+              if rec.get('barcode_international'):
+                  cases.append(('barcode',rec['barcode_international']))
+              if rec.get('trade_name_en'):
+                  cases.append(('brand',rec['trade_name_en']))
+              if rec.get('trade_name_ar'):
+                  cases.append(('arabic',rec['trade_name_ar']))
+              if rec.get('scientific_name'):
+                  cases.append(('ingredient',rec['scientific_name']))
+              for kind,q in cases:
+                  start = perf_counter()
+                  results = search_index('search.sqlite3',q,limit=20)
+                  elapsed.append((perf_counter()-start)*1000)
+                  ids = [r['id'] for r in results]
+                  assert len(ids) == len(set(ids)), f'Duplicate candidate for {q}'
+                  assert all(r['clinical_equivalence_verified'] is False for r in results)
+                  if kind in ('id','barcode'):
+                      assert ids and ids[0] == rec['id'], f'Incorrect exact identifier: {kind} {q}'
+                  kinds[kind] += 1
+                  checked += 1
+          assert checked >= 60
+          ordered = sorted(elapsed)
+          result = {
+              'input_records':len(rows), 'queries':checked, 'query_types':kinds,
+              'median_ms':round(statistics.median(elapsed),2),
+              'p95_ms':round(ordered[min(len(ordered)-1,int(len(ordered)*0.95))],2),
+              'max_ms':round(max(elapsed),2),
+              'exact_identifiers_verified':kinds['id']+kinds['barcode'],
+              'clinical_equivalence_autocertified':False,
+          }
+          print('ACTUAL FULL-CATALOG SEARCH BENCHMARK:',json.dumps(result,ensure_ascii=False))
+          PY
+      # The 300-drug JSON-only export workflow is unchanged. No database
+      # originals, search index or sidecar files are uploaded to its ZIPs.

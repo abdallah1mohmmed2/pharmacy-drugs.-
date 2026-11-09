@@ -8,11 +8,51 @@ Qualified review of every candidate and any clinical use remains mandatory.
 from __future__ import annotations
 import argparse
 import csv
+from collections import OrderedDict
 import json
 import os
 from pathlib import Path
 import sys
 from label_api import APIClient, propose
+
+
+class MemoizedLookups:
+    """Bounded in-run reuse for multiple brands with one active ingredient.
+
+    Reuses only the remote research *response*, never a proposed product match.
+    Every product is rechecked independently by classify_label().
+    """
+    def __init__(self, backend, max_entries=48):
+        self.backend = backend
+        self.max_entries = max_entries
+        self.caches = {"rxnorm": OrderedDict(), "fda": OrderedDict()}
+        self.cache_hits = {"rxnorm": 0, "fda": 0}
+        self.remote_calls = {"rxnorm": 0, "fda": 0}
+
+    def _cached(self, method, ingredient):
+        key = ingredient.casefold().strip()
+        cache = self.caches[method]
+        if key in cache:
+            cache.move_to_end(key)
+            self.cache_hits[method] += 1
+            return cache[key]
+        result = getattr(self.backend, method)(ingredient)
+        self.remote_calls[method] += 1
+        cache[key] = result
+        if len(cache) > self.max_entries:
+            cache.popitem(last=False)
+        return result
+
+    def rxnorm(self, ingredient):
+        return self._cached("rxnorm", ingredient)
+
+    def fda(self, ingredient):
+        return self._cached("fda", ingredient)
+
+    def metrics(self):
+        return {"remote_calls": self.remote_calls.copy(),
+                "in_memory_cache_hits": self.cache_hits.copy(),
+                "max_cached_ingredients": self.max_entries}
 
 
 def strict_candidate(meta):
@@ -30,6 +70,7 @@ def collect(records, client, offset, count, output_dir):
     if offset >= len(records):
         raise ValueError(f'Offset {offset} >= total {len(records)}')
     chosen = records[offset:offset + count]
+    client = MemoizedLookups(client)
     outfile = output_dir / 'clinical_label_candidates_REVIEW.jsonl'
     auditfile = output_dir / 'clinical_label_audit.csv'
     stats = {}
@@ -121,6 +162,7 @@ def collect(records, client, offset, count, output_dir):
         'input_rows': len(records), 'offset': offset, 'attempted': len(chosen),
         'counts': stats, 'safety_label_coverage': safety_counts,
         'medical_review_templates': len(review_templates),
+        'ingredient_lookup_cache': client.metrics(),
         'may_apply_to_database_automatically': False,
         'source_api': 'https://api.fda.gov/drug/label.json',
         'warnings': ['USA labels may not represent Egyptian brands or authorizations',

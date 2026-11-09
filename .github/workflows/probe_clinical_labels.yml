@@ -1,0 +1,90 @@
+name: Probe official clinical-label references (REVIEW ONLY)
+
+on:
+  push:
+    paths:
+      - '.github/workflows/probe_clinical_labels.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  clinical-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test the parsing and label safeguards
+        run: python -m unittest discover -s tests -v
+      - name: Convert full source locally for clinical candidates
+        run: python convert.py --download --sample 0 --output-dir source_catalog
+      - name: Select distinct common single-ingredient drugs from upstream
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          rows = json.loads(Path('source_catalog/drugs_96_DRAFT.json').read_text(encoding='utf-8'))
+          targets = ['metformin', 'amlodipine', 'atorvastatin', 'omeprazole',
+                     'losartan', 'ibuprofen', 'amoxicillin', 'warfarin',
+                     'cetirizine', 'levothyroxine', 'simvastatin', 'aspirin',
+                     'lisinopril', 'metoprolol', 'bisoprolol', 'prednisolone',
+                     'azithromycin', 'clopidogrel', 'fluconazole', 'digoxin']
+          selected = []
+          for ingredient in targets:
+              possible = []
+              for r in rows:
+                  scientific = (r['scientific_name'] or '').strip().lower()
+                  if scientific and (scientific == ingredient or scientific.startswith(ingredient + ' ')):
+                      if '+' not in scientific and '/' not in scientific and ';' not in scientific:
+                          possible.append(r)
+              if possible:
+                  possible.sort(key=lambda x: (
+                      x['strength_text'] != '', x['route'] != 'OTHER', x['trade_name_en'] != ''
+                  ), reverse=True)
+                  selected.append(possible[0])
+          if len(selected) < 5:
+              raise SystemExit(f'Not enough sample ingredients: {len(selected)}')
+          Path('clinical_probe_input.json').write_text(
+              json.dumps(selected, ensure_ascii=False), encoding='utf-8'
+          )
+          print('Selected',len(selected),'distinct ingredient drug products')
+          PY
+      - name: Query openFDA and RxNorm for reference-only label candidates
+        env:
+          OPENFDA_API_KEY: ${{ secrets.OPENFDA_API_KEY }}
+        run: |
+          python clinical_candidates.py \
+            --input clinical_probe_input.json \
+            --count 200 \
+            --delay 1 \
+            --output-dir clinical_probe_results
+      - name: Display counts and enforce no clinical auto-approval
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('clinical_probe_results')
+          summary = json.loads((root / 'clinical_label_summary.json').read_text(encoding='utf-8'))
+          rows = [json.loads(line) for line in (root / 'clinical_label_candidates_REVIEW.jsonl').read_text(encoding='utf-8').splitlines()]
+          assert rows and len(rows) == summary['attempted']
+          assert all(r['clinical_use_allowed'] is False and r['review_required'] is True for r in rows)
+          assert all(r['status'] != 'CANDIDATE_REQUIRES_PHARMACIST_REVIEW' or r.get('suggestions') for r in rows)
+          print('REVIEW-ONLY LABEL RESULTS:', summary['counts'])
+          PY
+      - name: Upload source summaries and actual FDA/RxNorm research-only output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clinical-label-probe-REVIEW-ONLY
+          path: |
+            clinical_probe_input.json
+            clinical_probe_results/
+            source_catalog/manifest.json
+          retention-days: 14
+          if-no-files-found: warn

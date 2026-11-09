@@ -65,6 +65,25 @@ python clinical_candidates.py --input output-full/drugs_96_DRAFT.json --count 20
 
 **اختبارات التكامل:** `.github/workflows/tests.yml` الآن يجري اختبارات دون إنترنت، وبعدها يفحص التحويل على أول 20 سجلًا من المصدر الحقيقي ويحفظ معاينة وتقارير في Artifacts.
 
+## بناء قاعدة البيانات الكاملة على GitHub
+
+يوجد مسار مستقل **Build FULL eg-drugs draft catalog** داخل تبويب Actions:
+
+https://github.com/abdallah1mohmmed2/pharmacy-drugs.-/actions/workflows/build_full_draft.yml
+
+أول تشغيل موثّق نجح في تحويل **27,617 سجلًا** (حالة المصدر بتاريخ 9 نوفمبر 2026) إلى 96 حقلًا لكل سجل، مع ملفات الأصل وتقارير المصدر في Artifact باسم `full-eg-drugs-96-fields-DRAFT`. لا تعني الـ96 خانة أن البيانات الطبية الـ96 مكتملة أو معتمدة.
+
+تقارير الاسم أظهرت استخراج الشكل الصيدلاني لـ22,605 سجلًا، وطريقة الإعطاء لـ20,027، والتركيز المفرد لـ9,541. هذه حقول مستخرجة من **اسم المنتج** وليست تحققًا من النشرة، ولذلك تحتاج مراجعة قبل التفعيل.
+
+صفحة تشغيل النسخة الكاملة:
+https://github.com/abdallah1mohmmed2/pharmacy-drugs.-/actions/runs/42697572875
+
+يوجد أيضًا **Probe official clinical-label references (REVIEW ONLY)** لاختبار جلب نصوص openFDA وRxNorm من عيّنة متنوعة من الأدوية الفعلية، وحفظها خارج البيانات المعتمدة:
+
+https://github.com/abdallah1mohmmed2/pharmacy-drugs.-/actions/workflows/probe_clinical_labels.yml
+
+عند عدم وجود تطابق مؤكد للتركيز والشكل والشركة/المنتج، قد يجد البرنامج **مرجعًا للمادة الفعالة**، ولكنه ليس نشرة للمنتج المحلي. يُحفظ ضمن `reference_fields` للمراجعة، لا في قاعدة الـ96 حقلًا. قسم `adverse_reactions` يُحفظ منفصلًا دون تصنيفه تلقائيًا شائعًا أو خطيرًا.
+
 ## مبادئ حماية البيانات
 
 - المصدر `active` هو اسم المواد الفعالة وليس حالة تنشيط السجل.

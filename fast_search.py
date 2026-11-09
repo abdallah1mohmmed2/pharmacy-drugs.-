@@ -83,6 +83,7 @@ class DrugSearchIndex:
         self.barcodes: dict[str, set[int]] = defaultdict(set)
         self.id_to_position: dict[int, int] = {}
         self.normalized = []
+        self.field_tokens = []
         for pos, row in enumerate(records):
             if not isinstance(row, dict) or set(row) not in (base, extended):
                 raise ValueError(f"Record {pos} is not the converted 96/98-field JSON schema")
@@ -92,7 +93,9 @@ class DrugSearchIndex:
             self.id_to_position[rid] = pos
             fields = {field: normalize(row.get(field, "")) for field in QUERY_FIELDS}
             self.normalized.append(fields)
-            all_tokens = frozenset().union(*(tokens(text) for text in fields.values()))
+            field_tokens = {field: tokens(text) for field, text in fields.items()}
+            self.field_tokens.append(field_tokens)
+            all_tokens = frozenset().union(*field_tokens.values())
             for token in all_tokens:
                 self.postings[token].add(pos)
             for name in ("trade_name_en", "trade_name_ar", "scientific_name"):
@@ -114,11 +117,22 @@ class DrugSearchIndex:
         candidates = set(self.exact_names.get(query, ()))
         postings = [(len(self.postings[t]), t) for t in qtokens if t in self.postings]
         postings.sort()
-        # Rare-first postings: selects meaningful words even for long queries.
-        for _, token in postings:
-            candidates.update(self.postings[token])
-            if len(candidates) > MAX_CANDIDATES:
-                break
+        # Inverted-index intersection on the rarest terms sharply narrows
+        # candidate work for multi-word product names.
+        if postings:
+            candidates.update(self.postings[postings[0][1]])
+            for _, token in postings[1:]:
+                matches = candidates.intersection(self.postings[token])
+                if matches:
+                    candidates = matches
+                elif len(candidates) < 150:
+                    # Preserve possible partial matches if the exact AND is empty.
+                    candidates.update(self.postings[token])
+                if len(candidates) > MAX_CANDIDATES:
+                    # A one-word generic term can have thousands of products.
+                    # Preserve deterministic order to bound search CPU use.
+                    candidates = set(sorted(candidates)[:MAX_CANDIDATES])
+                    break
         # Fuzzy fallback for misspellings, only if at least three characters.
         if len(candidates) < 60 and len(query.replace(" ", "")) >= 4:
             grams = trigrams(query)
@@ -148,6 +162,7 @@ class DrugSearchIndex:
         for pos in candidates:
             row = self.records[pos]
             fields = self.normalized[pos]
+            field_tokens = self.field_tokens[pos]
             reasons = []
             score = 0.0
             barcode = str(row.get("barcode_international") or "")
@@ -170,7 +185,7 @@ class DrugSearchIndex:
                 elif len(q) >= 3 and q in value:
                     score += 22 * weight
                     reasons.append("contains_" + field)
-                overlap = qtokens & tokens(value)
+                overlap = qtokens & field_tokens[field]
                 if overlap:
                     score += 17 * weight * (len(overlap) / max(len(qtokens), 1))
                     if not any(r.endswith(field) for r in reasons):
@@ -182,7 +197,7 @@ class DrugSearchIndex:
                     score = similarity * 120
                     reasons.append("fuzzy_name")
             if qstrengths:
-                known_strengths = set(tokens(fields["strength_text"]))
+                known_strengths = field_tokens["strength_text"]
                 # A dose/strength mismatch excludes the record from exact-product confidence.
                 if known_strengths and not qstrengths.intersection(known_strengths):
                     score -= 200

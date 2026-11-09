@@ -218,8 +218,16 @@ def search_index(index_path, query, *, limit=10, full_record=False):
         # Exact lookup uses B-tree indexes even if a term has 2-3 characters.
         if raw.isdecimal():
             numeric = int(raw)
-            for row in con.execute("SELECT id FROM records WHERE barcode = ?", (raw,)):
-                put(row["id"], 1200, "exact_barcode")
+            matching_barcodes = [r["id"] for r in con.execute(
+                "SELECT id FROM records WHERE barcode = ? ORDER BY id", (raw,)
+            )]
+            for rid in matching_barcodes:
+                if len(matching_barcodes) == 1:
+                    put(rid, 1200, "exact_barcode")
+                else:
+                    # A GTIN re-used by multiple source records is AMBIGUOUS,
+                    # even if each barcode passes the check digit algorithm.
+                    put(rid, 830, "shared_barcode_needs_review")
             if numeric > 0:
                 for row in con.execute("SELECT id FROM records WHERE id = ?", (numeric,)):
                     put(row["id"], 1100, "exact_id")
@@ -292,6 +300,7 @@ def search_index(index_path, query, *, limit=10, full_record=False):
                 "ranking_score": round(score, 3),
                 "strength_conflict": strength_conflict,
                 "clinical_equivalence_verified": False,
+                "barcode_uniqueness_verified": mode == "exact_barcode",
             }
             if full_record:
                 result["record"] = drug

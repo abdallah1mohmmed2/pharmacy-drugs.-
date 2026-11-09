@@ -57,6 +57,38 @@ python fast_drug_search.py --index search.sqlite3 --query "6221000003295" --limi
 - تتطلب واجهات openFDA الالتزام بحدود المعدّل والاستخدام؛ لإجراء بحوث متكررة يمكنك إضافة `OPENFDA_API_KEY` إلى GitHub Secrets بنفسك. تحتفظ الاستعلامات الخارجية بذاكرة مؤقتة بمدة صلاحية محددة، ولا تُرسل قاعدة بيانات الصيدلية كاملة إلى واجهات النشرات.
 - مهمة **Export JSON batches** المنفصلة تبقى كما هي: **300 سجل أو أقل لكل ملف JSON محوّل** دون إدراج قاعدة المصدر الأصلية أو ملفات جانبية داخل ملفات الأدوية المضغوطة.
 
+## برنامج مقارنة مخرجات التحويل والبحث — جديد
+
+أُضيف برنامج **`compare_research.py`** وربطناه مباشرة بمهمة **Fast multilingual drug research** في GitHub Actions؛ يأخذ مدخلين منفصلين:
+
+- **التحويل**: `catalog_temp/drugs_96_DRAFT.json`، وهو ملف الـ96 أو 98 حقلًا المحوّل (ليس قاعدة المصدر قبل التحويل).
+- **الباحث**: `research_output/medical_sources_REVIEW_ONLY.json`، وهو سجل المراجع التي جُمعت من openFDA وRxNorm وDailyMed بعد البحث المحلي.
+
+يفحص البرنامج رقم الدواء و`uuid` والاسمين العربي والإنجليزي والمادة الفعالة والتركيز والشكل الصيدلاني وطريق الإعطاء واسم الشركة عند وجوده. عند وجود اختلاف **يرفض مقارنة المعلومات لهذا المنتج**، ويعرض الاختلاف في التقرير دون إضافة حقل واحد. كما يمنع تكرار المعرّفات ويكشف اختلاف النصوص الطبية الموجودة عن نصوص النشرات المسترجعة.
+
+**المخرجات:** `research_output/comparison_REVIEW_ONLY.json` يحتوي قائمة مستقلة لكل دواء وحالات **متطابق**، **ناقص ولديه مرجع**، **متعارض ويحتاج مراجعة**، **لا توجد له معلومات خارجية**. ويتضمن أيضًا `external_label_checks` الذي يميز تطابق سجل البحث مع قاعدة التحويل عن تطابق نشرة المنتج المحلي.
+
+ينشئ `research_output/product_review_NOT_APPROVED.json` نماذج مراجعة مرتبطة بنفس `id` و`uuid` وبحقول طبية **فارغة**، مع `approved=false`. يقوم المراجع الصيدلاني بفحص نشرة **المنتج نفسه** وتوثيق المصدر واستكمال النصوص؛ بعد ذلك فقط يمكن استخدام `apply_reviewed_medical.py` لإنشاء نسخة جديدة من البيانات. **لا تعتمد الأداة صحة المعلومات الطبية أو تنفذ دمجًا تلقائيًا**.
+
+### تشغيل المقارنة محليًا
+
+```bash
+python compare_research.py \
+  --catalog catalog_temp/drugs_96_DRAFT.json \
+  --research research_output/medical_sources_REVIEW_ONLY.json \
+  --output research_output/comparison_REVIEW_ONLY.json \
+  --review-template research_output/product_review_NOT_APPROVED.json
+```
+
+### التشغيل المباشر على GitHub
+
+https://github.com/abdallah1mohmmed2/pharmacy-drugs.-/actions/workflows/fast_drug_research.yml
+
+من **Run workflow** أدخل اسم دواء أو مادة فعالة، وشغّل البحث في المصادر الرسمية. ستجد ملفات **JSON الخاصة بالبحث والمقارنة فقط** في Artifact باسم `fast-drug-research-REVIEW-ONLY`. هذا Artifact مستقل عن **Export JSON batches**: تبقى ملفات الأدوية الـ300 JSON محوّلة خالية من قاعدة المصدر وتقارير المراجعة دون تغيير.
+
+تم التحقق من اتصال البحث بالتحويل والمقارنة على نتائج تشغيل فعلية:
+https://github.com/abdallah1mohmmed2/pharmacy-drugs.-/actions/runs/42715447227
+
 ## تطوير الحقول: اسم الشركة والتصنيف والتعبئة
 
 أُضيف **الوضع الموسّع** إلى مهمة Export JSON batches. تُبقي كل سجلات JSON الحقول **96 الأصلية دون تغيير في أسمائها**، وتضيف حقلين للعرض فقط، لأن المخطط الأصلي لا يحتوي خانة نصية لاسم الشركة أو وصف العبوة:

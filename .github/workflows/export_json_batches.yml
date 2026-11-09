@@ -1,4 +1,4 @@
-name: Export JSON batches - up to 300 drugs each
+name: Export JSON batches - 300 drugs with manufacturer and packaging
 
 on:
   # Trigger one initial run when this workflow is first added.
@@ -38,6 +38,7 @@ jobs:
       - name: Convert all upstream drugs to the established 96-field format
         run: |
           python convert.py --download --sample 0 \
+            --include-catalog-details \
             --expected-min-rows 20000 --output-dir full_catalog
       - name: Verify the full conversion against the original source count
         run: |
@@ -49,8 +50,12 @@ jobs:
           rows = json.loads((root / 'drugs_96_DRAFT.json').read_text(encoding='utf-8'))
           assert manifest['converted_records'] == manifest['source_records_total'] == len(rows)
           assert not manifest['is_sample']
-          assert all(len(r) == 96 and r['is_active'] == 0 for r in rows)
-          print('Verified full conversion:', len(rows), 'drugs in original order.')
+          assert all(len(r) == 98 and r['is_active'] == 0 for r in rows)
+          assert all(r['manufacturer_name'] == (r['manufacturer_name'] or '') for r in rows)
+          assert all('package_description' in r and 'manufacturer_name' in r for r in rows)
+          assert manifest['export_record_fields'] == 98
+          print('Verified extended conversion:', len(rows), 'drugs in original order.')
+          print('Extra field coverage:', manifest['catalog_details_nonempty_counts'])
           PY
       - name: Split JSON batches and verify zero repeats, no omissions or altered records
         id: split

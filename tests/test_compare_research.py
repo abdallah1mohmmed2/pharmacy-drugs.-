@@ -81,6 +81,9 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(fields["indications"]["comparison_status"],"EXACT_TEXT_ALREADY_PRESENT")
         self.assertEqual(fields["interactions_summary"]["comparison_status"],"MISSING_REQUIRES_REVIEW")
         self.assertEqual(fields["contraindications"]["comparison_status"],"MISSING_REQUIRES_REVIEW")
+        self.assertIn("side_effects_serious", result["results"][0]["clinical_fields_missing_without_reference"])
+        self.assertFalse(result["results"][0]["external_label_checks"]["verified_for_egyptian_product"])
+        self.assertFalse(result["results"][0]["external_label_checks"]["brand_match"])
         self.assertEqual(result["results"][0]["unclassified_adverse_effects"]["adverse_reactions"]["classification"],
                          "UNCLASSIFIED_MIXED_EFFECTS")
         with self.assertRaisesRegex(ValueError,"approved=true"):

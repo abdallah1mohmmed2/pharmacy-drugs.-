@@ -20,6 +20,7 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from safety_sections import safety_review_bundle
 
 FDA_URL = "https://api.fda.gov/drug/label.json"
 RXNORM_URL = "https://rxnav.nlm.nih.gov/REST/rxcui.json"
@@ -251,7 +252,7 @@ def propose(record, api, minimum):
     meta = {"id": record.get("id", ""), "trade_name_en": brand,
             "scientific_name": record.get("scientific_name", ""), "status": "", "score": 0,
             "rxnorm_ids": [], "source": "", "selected_fields": [], "suggestions": {},
-            "reference_fields": {}, "unclassified_label_sections": {}, "note": ""}
+            "reference_fields": {}, "unclassified_label_sections": {}, "safety_review": {}, "note": ""}
     if not ingredient:
         meta["status"] = "skip_complex_or_missing_ingredient"
         return meta
@@ -285,11 +286,15 @@ def propose(record, api, minimum):
     meta["us_label_routes"] = as_list(openfda.get("route") or label.get("route"))
     meta["same_score_candidates"] = sum(1 for x in candidates if x["score"] == chosen["score"])
     set_id = str(label.get("set_id", ""))
+    meta["source_set_id"] = set_id
     meta["source"] = ("https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=" + set_id
                       if set_id else "https://open.fda.gov/apis/drug/label/")
     if chosen["identity"] != "exact_ingredient":
         meta["status"] = "match_needs_manual_verification"
         return meta
+    # Preserve the complete source-label interaction and reaction sections
+    # with field-level provenance, but never classify the reaction list.
+    meta["safety_review"] = safety_review_bundle(label)
     for dest, src_fields in FIELD_MAP.items():
         if not nonempty(record.get(dest)):
             proposal = ("; ".join(map(squish, as_list((label.get("openfda") or {}).get("pharm_class_epc"))))
@@ -301,6 +306,8 @@ def propose(record, api, minimum):
     adverse_text = label_text(label, ("adverse_reactions",))
     if adverse_text:
         meta["unclassified_label_sections"]["adverse_reactions"] = adverse_text
+    # No data are automatically inserted into side_effects_common or
+    # side_effects_serious: the label section can include both categories.
     if chosen["score"] >= minimum and not chosen["route_conflict"]:
         meta["suggestions"] = dict(meta["reference_fields"])
         meta["selected_fields"] = list(meta["suggestions"])

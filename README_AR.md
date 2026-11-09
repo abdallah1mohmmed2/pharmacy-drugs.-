@@ -23,6 +23,40 @@ https://github.com/mahmoudfalous/eg-drugs/blob/main/data/eg_drugs.json
 
 لا يحتوي مصدر eg-drugs الأصلي على هذه التفاصيل الموثوقة لكل منتج. لذلك **لا** يحوّل البرنامج التركيز `strength_text` إلى `dosage_administration`، ولا يفترض أن النشرات الأمريكية العامة تطابق كل المستحضرات المصرية. `clinical_candidates.py` يوفر نصوص النشرات المرجعية مع معلومات المطابقة، لكن حقول الجرعات وموانع الاستعمال لا تُملأ إلا بعد مراجعة وتوثيق هوية المنتج والتركيز والشكل والنشرة المختصة. تبقى كل السجلات `is_active=0` افتراضيًا.
 
+## الاستكمال الطبي بعد مراجعة صيدلانية
+
+يتضمن المشروع الآن `apply_reviewed_medical.py` لاستكمال الحقول الطبية مثل `dosage_administration` و`contraindications` و`warnings_precautions` **فقط عندما يوجد ملف مراجعة طبي موثّق لكل منتج**. يتم رفض الخلط إذا اختلف اسم المنتج أو `id` أو `uuid` أو المادة العلمية أو التركيز أو الشكل أو طريق الإعطاء، ويرفض البرنامج الكتابة فوق نص دوائي موجود أو إدخال علم مخاطر غير معتمد.
+
+مثال لملف `approved_medical.json` (القيم الوصفية مكانها الحقيقي بعد المراجعة وليست توصية طبية):
+
+```json
+[
+  {
+    "id": 123,
+    "uuid": "THE_EXACT_UUID_FROM_EXPORTED_DRUG",
+    "trade_name_en": "EXACT_TRADE_NAME_FROM_JSON",
+    "scientific_name": "EXACT_INGREDIENT_FROM_JSON",
+    "strength_text": "EXACT_STRENGTH_FROM_JSON",
+    "dosage_form": "EXACT_FORM_FROM_JSON",
+    "route": "EXACT_ROUTE_FROM_JSON",
+    "approved": true,
+    "reviewed_by": "QUALIFIED_PHARMACIST_NAME",
+    "review_date": "2026-11-10",
+    "source_url": "https://example.org/exact-product-approved-leaflet",
+    "reviewed_fields": {
+      "dosage_administration": "PASTE_VERIFIED_PRODUCT_DIRECTIONS_HERE",
+      "contraindications": "PASTE_VERIFIED_PRODUCT_CONTRAINDICATIONS_HERE"
+    }
+  }
+]
+```
+
+```bash
+python apply_reviewed_medical.py --input converted.json --approvals approved_medical.json --output reviewed_draft.json
+```
+
+**لا يُعد ذكر اسم مراجع في ملف JSON إثباتًا لهويته**؛ يجب التحقق خارجيًا من المراجعة والنشرة قبل الاستيراد الفعلي. هذه الأداة لا تعتمد المنتجات تلقائيًا، ولا تتدخل في مخرجات الـ300 دواء المعتادة. النشرة الأمريكية الخاصة بمادة فعالة لا تعني أنها النشرة المعتمدة لنفس المنتج المصري.
+
 ## إخراج JSON فقط — كل ملف لا يتجاوز 300 دواء
 
 لتحميل **ملفات JSON فقط دون البيانات الأصلية أو CSV أو ملفات المراجعة**، افتح:

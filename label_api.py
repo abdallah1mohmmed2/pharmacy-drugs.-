@@ -250,7 +250,7 @@ class APIClient:
         verify every returned candidate. Not exhaustive and not clinical approval.
         """
         clean = re.sub(r'["\\\\]', ' ', squish(ingredient))
-        clean = re.sub(r"\\s+", " ", clean).strip()
+        clean = re.sub(r"\s+", " ", clean).strip()
         if not clean or len(clean) > 85:
             return []
         seen = {}

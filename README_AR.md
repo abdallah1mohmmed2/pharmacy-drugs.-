@@ -23,6 +23,36 @@ https://github.com/mahmoudfalous/eg-drugs/blob/main/data/eg_drugs.json
 
 لا يحتوي مصدر eg-drugs الأصلي على هذه التفاصيل الموثوقة لكل منتج. لذلك **لا** يحوّل البرنامج التركيز `strength_text` إلى `dosage_administration`، ولا يفترض أن النشرات الأمريكية العامة تطابق كل المستحضرات المصرية. `clinical_candidates.py` يوفر نصوص النشرات المرجعية مع معلومات المطابقة، لكن حقول الجرعات وموانع الاستعمال لا تُملأ إلا بعد مراجعة وتوثيق هوية المنتج والتركيز والشكل والنشرة المختصة. تبقى كل السجلات `is_active=0` افتراضيًا.
 
+## التفاعلات الدوائية والآثار الجانبية — استرجاع مُوثّق للمراجعة
+
+تستخدم `safety_sections.py` و`label_api.py` و`clinical_candidates.py` النشرات الرسمية الأمريكية عند وجود **مادة فعالة مطابقة**، وتحفظ نصوص الأقسام كما وردت في النشرة مع حقل المصدر والرابط:
+
+- `drug_interactions` ← مسودة لمراجعة `interactions_summary` مع سرد النص الأصلي للتفاعلات. لا يجري استنتاج درجة خطورة التفاعل من عنوان القسم.
+- `adverse_reactions` و`adverse_reactions_table` ← مصدر للآثار الجانبية، دون نسخه كاملًا إلى `side_effects_common` أو `side_effects_serious`؛ فالقسم قد يجمع النوعين.
+- `warnings_and_cautions` و`boxed_warning` ← معلومات عن مخاطر مهمة، **وليست دائمًا قائمة آثار جانبية خطيرة**.
+
+توضح `safety_review.sections` النص الأصلي و`source_field`، وتعرض `safety_review.review_targets` مؤشرات لفظية مثل `most common adverse reactions` و`serious adverse reactions`. وجود المؤشر لا يصنف أي حدث طبي تلقائيًا. كل هذا **للمراجعة وليس معلومات سريرية معتمدة**.
+
+عند تشغيل مسار **Probe interactions and adverse reactions (REVIEW ONLY)** من GitHub Actions، يُنتج ملف `medical_safety_review_TEMPLATE.json` يحتوي على هوية الدواء والحقول الثلاثة التالية **فارغة** مع `approved=false`:
+
+```json
+{
+  "approved": false,
+  "reviewed_fields": {
+    "interactions_summary": "",
+    "side_effects_common": "",
+    "side_effects_serious": ""
+  }
+}
+```
+
+هذه صورة مبسطة للحقول؛ يتضمن الملف الحقيقي `id` و`uuid` واسم الدواء وتركيزه وشكله ومصدر النشرة. على الصيدلي المؤهل التحقق من **نشرة المنتج المصري نفسه**، وملء النصوص الصحيحة وحذف الحقول الفارغة وتوثيق تاريخ المراجعة واسم المراجع، ثم اعتماد سجل المراجعة يدويًا. بعدها يمكن استعمال `apply_reviewed_medical.py` لإدخال النصوص المدققة في نسخة JSON جديدة؛ يُمنع تغيير هوية الدواء أو ملء الحقول ببيانات تخص مادة فعالة عامة بلا تطابق منتج.
+
+صفحة تشغيل الاختبار:
+https://github.com/abdallah1mohmmed2/pharmacy-drugs.-/actions/workflows/probe_clinical_labels.yml
+
+**تنبيه:** لا تدخل تقارير المراجعة هذه في Artifacts الـ300 دواء؛ تظل ملفات الـ300 مخصصة للـJSON المحوّل فقط، ولا تتغير إلا بعد إدخال بيانات معتمدة ضمن مسار استيراد منفصل.
+
 ## الاستكمال الطبي بعد مراجعة صيدلانية
 
 يتضمن المشروع الآن `apply_reviewed_medical.py` لاستكمال الحقول الطبية مثل `dosage_administration` و`contraindications` و`warnings_precautions` **فقط عندما يوجد ملف مراجعة طبي موثّق لكل منتج**. يتم رفض الخلط إذا اختلف اسم المنتج أو `id` أو `uuid` أو المادة العلمية أو التركيز أو الشكل أو طريق الإعطاء، ويرفض البرنامج الكتابة فوق نص دوائي موجود أو إدخال علم مخاطر غير معتمد.

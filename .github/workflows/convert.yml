@@ -1,0 +1,83 @@
+name: Safe eg-drugs 96-field conversion
+
+on:
+  workflow_dispatch:
+    inputs:
+      records:
+        description: '10 = test, 100 = sample, 0 = full database'
+        type: choice
+        options: ['10', '100', '0']
+        default: '10'
+        required: true
+      clinical_candidates:
+        description: 'Review-only US label candidates (not written into database)'
+        type: choice
+        options: ['0', '20', '100']
+        default: '0'
+        required: true
+      clinical_offset:
+        description: 'Start at this row for clinical candidate review (0-based)'
+        type: number
+        default: 0
+        required: true
+      expected_git_blob_sha1:
+        description: 'Optional source version pin (40-char Git blob hash); empty = latest source'
+        type: string
+        default: ''
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: safe-eg-drugs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  convert:
+    name: Validate and convert data, never write to repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run offline regression tests
+        run: python -m unittest discover -s tests -v
+      - name: Convert to exactly 96 fields and verify provenance
+        env:
+          SAMPLE: ${{ inputs.records }}
+          EXPECTED_SOURCE_BLOB: ${{ inputs.expected_git_blob_sha1 }}
+        run: |
+          python convert.py \
+            --download \
+            --sample "$SAMPLE" \
+            --expected-min-rows 20000 \
+            --expected-git-blob-sha1 "$EXPECTED_SOURCE_BLOB" \
+            --output-dir outputs
+      - name: Request conservative external label suggestions (optional)
+        if: ${{ success() && inputs.clinical_candidates != '0' }}
+        env:
+          REVIEW_COUNT: ${{ inputs.clinical_candidates }}
+          REVIEW_OFFSET: ${{ inputs.clinical_offset }}
+          OPENFDA_API_KEY: ${{ secrets.OPENFDA_API_KEY }}
+        run: |
+          python clinical_candidates.py \
+            --input outputs/drugs_96_DRAFT.json \
+            --offset "$REVIEW_OFFSET" \
+            --count "$REVIEW_COUNT" \
+            --delay 1 \
+            --output-dir clinical_outputs
+      - name: Upload converted JSON, manifest, source copies and audit trail
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: eg-drugs-safe-${{ github.run_number }}
+          path: |
+            outputs/
+            clinical_outputs/
+          if-no-files-found: warn
+          retention-days: 30

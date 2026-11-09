@@ -242,13 +242,37 @@ class APIClient:
         return (payload.get("idGroup") or {}).get("rxnormId") or []
 
     def fda(self, ingredient):
-        # Search only by active ingredient name; subsequently verify every candidate.
+        """Bounded multi-field openFDA recall; never trust the search match alone.
+
+        Previously only the first 20 generic-name hits were returned, potentially
+        hiding different brand/strength labels. Search generic AND substance fields,
+        dedupe by SPL set_id, keep the newest version, then let classify_label()
+        verify every returned candidate. Not exhaustive and not clinical approval.
+        """
+        clean = re.sub(r'["\\\\]', ' ', squish(ingredient))
+        clean = re.sub(r"\\s+", " ", clean).strip()
+        if not clean or len(clean) > 85:
+            return []
+        seen = {}
         for field in ("openfda.generic_name", "openfda.substance_name"):
-            payload = self.get(FDA_URL, {"search": f'{field}:"{ingredient}"', "limit": "20"})
+            payload = self.get(FDA_URL, {
+                "search": f'{field}:"{clean}"',
+                "limit": "100",
+            })
             results = (payload or {}).get("results") or []
-            if results:
-                return results
-        return []
+            for label in results:
+                if not isinstance(label, dict):
+                    continue
+                set_id = str(label.get("set_id") or "").strip()
+                # Do not merge distinct products merely because they share a brand.
+                key = ("set_id:" + set_id) if set_id else (
+                    "source_sha256:" +
+                    hashlib.sha256(json.dumps(label, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+                )
+                previous = seen.get(key)
+                if previous is None or str(label.get("effective_time") or "") > str(previous.get("effective_time") or ""):
+                    seen[key] = label
+        return sorted(seen.values(), key=lambda x: str(x.get("effective_time") or ""), reverse=True)[:200]
 
 
 def propose(record, api, minimum):

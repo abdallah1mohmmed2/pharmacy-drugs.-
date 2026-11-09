@@ -59,6 +59,15 @@ class FastSearchTests(unittest.TestCase):
         self.assertEqual(results[0]["match_method"],"exact_barcode")
         self.assertFalse(results[0]["clinical_equivalence_verified"])
 
+    def test_duplicate_barcode_does_not_assert_unique_product(self):
+        data = copy.deepcopy(RECORDS)
+        data[1]["barcode_international"] = data[0]["barcode_international"]
+        self.source.write_text(json.dumps(data,ensure_ascii=False),encoding="utf-8")
+        build_index(self.source, self.index)
+        hits = search_index(self.index, data[0]["barcode_international"], limit=10)
+        self.assertEqual({x["id"] for x in hits if x["match_method"] == "shared_barcode_needs_review"}, {1,2})
+        self.assertFalse(any(x["barcode_uniqueness_verified"] for x in hits))
+
     def test_exact_id(self):
         results=search_index(self.index,"4")
         self.assertEqual(results[0]["id"],4)

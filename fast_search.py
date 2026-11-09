@@ -68,10 +68,6 @@ def trigrams(text: str) -> frozenset[str]:
     return frozenset(compact[i:i+3] for i in range(len(compact)-2))
 
 
-def match_strength(text: str) -> str:
-    return next(iter(DOSAGE_MARKER.findall(text)), ())
-
-
 class DrugSearchIndex:
     """Static catalog index; keep product documents intact, no merge across IDs."""
 
@@ -113,6 +109,8 @@ class DrugSearchIndex:
     def _candidates(self, query: str, qtokens: frozenset[str]) -> set[int]:
         if query.isdecimal() and query in self.barcodes:
             return set(self.barcodes[query])
+        if query.isdecimal() and int(query) in self.id_to_position:
+            return {self.id_to_position[int(query)]}
         candidates = set(self.exact_names.get(query, ()))
         postings = [(len(self.postings[t]), t) for t in qtokens if t in self.postings]
         postings.sort()

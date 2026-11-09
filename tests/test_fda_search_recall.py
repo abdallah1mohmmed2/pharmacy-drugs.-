@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from label_api import APIClient
+from label_api import APIClient, numeric_strength_in_label
 from clinical_candidates import MemoizedLookups, collect
 
 
@@ -23,6 +23,16 @@ class StubHTTP:
                 {"set_id":"Z", "effective_time":"20260301", "openfda":{"generic_name":["Drug"]}},
             ]}
         return {}
+
+
+class ExactStrengthBoundaryTests(unittest.TestCase):
+    def test_10mg_must_not_match_110mg(self):
+        self.assertFalse(numeric_strength_in_label("10mg", {"dosage_forms_and_strengths": ["110 mg tablet"]}))
+        self.assertTrue(numeric_strength_in_label("10mg", {"dosage_forms_and_strengths": ["10 mg tablet"]}))
+
+    def test_5mg_not_15mg(self):
+        self.assertFalse(numeric_strength_in_label("5mg", {"active_ingredient": ["15mg ingredient"]}))
+        self.assertTrue(numeric_strength_in_label("5mg", {"active_ingredient": ["5mg ingredient"]}))
 
 
 class MultiSourceFDATests(unittest.TestCase):

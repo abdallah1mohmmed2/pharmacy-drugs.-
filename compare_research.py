@@ -182,12 +182,27 @@ def compare(catalog, research_report):
                     "classification": "UNCLASSIFIED_MIXED_EFFECTS",
                     "review_required": True,
                 }
+        # Mark unknown clinical fields explicitly even if no matching
+        # external source is available; an empty field is NOT a negative claim.
+        lacking_reference = sorted(
+            key for key in REVIEWABLE_FIELDS
+            if original.get(key) in ("", None) and not references.get(key)
+        )
         possible_template_fields = set(eligible_keys) & REVIEWABLE_FIELDS
         if adverse:
             # Blank placeholders ONLY. Never paste a mixed reaction section
             # into either a 'common' or 'serious' pharmacy field.
             possible_template_fields.update({"side_effects_common", "side_effects_serious"})
         technical_match = bool(result.get("potential_strict_match") is True)
+        external_label_checks = {
+            "ingredient_identity": result.get("identity", "unverified"),
+            "brand_match": result.get("brand_match") is True,
+            "strength_match": result.get("strength_match") is True,
+            "route_match": result.get("route_match") is True,
+            "route_conflict": result.get("route_conflict") is True,
+            "same_score_candidates": result.get("same_score_candidates", None),
+            "verified_for_egyptian_product": False,
+        }
         status = "TECHNICAL_MATCH_STILL_REVIEW_REQUIRED" if technical_match else "REFERENCE_ONLY_NOT_LOCAL_PRODUCT_MATCH"
         if not field_rows and not adverse:
             status = "NO_RELEVANT_EXTERNAL_EVIDENCE"
@@ -203,6 +218,8 @@ def compare(catalog, research_report):
             "comparison_status": status,
             "research_match_status": result.get("status"),
             "technical_match_only": technical_match,
+            "external_label_checks": external_label_checks,
+            "clinical_fields_missing_without_reference": lacking_reference,
             "label_source": result.get("source", ""),
             "label_set_id": result.get("source_set_id", ""),
             "label_effective_time": result.get("label_effective_time", ""),

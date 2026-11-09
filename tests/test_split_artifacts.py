@@ -37,12 +37,12 @@ class JSONOnlyArtifactTests(unittest.TestCase):
                              ["batch_01.json", "batch_02.json", "batch_03.json"])
             self.assertEqual(rows, before)  # No source mutation
 
-    def test_up_to_5000_and_last_smaller(self):
-        rows = [make_row(i) for i in range(1, 5002)]
+    def test_up_to_1000_and_last_smaller(self):
+        rows = [make_row(i) for i in range(1, 1002)]
         with tempfile.TemporaryDirectory() as tmp:
             total, files = partition_records(rows, Path(tmp) / "out")
-            self.assertEqual(total, 5001)
-            self.assertEqual([len(json.loads(p.read_text(encoding="utf-8"))) for p in files], [5000, 1])
+            self.assertEqual(total, 1001)
+            self.assertEqual([len(json.loads(p.read_text(encoding="utf-8"))) for p in files], [1000, 1])
 
     def test_duplicate_id_rejected_without_creating_outputs(self):
         rows = [make_row(1), make_row(1)]
@@ -83,7 +83,7 @@ class JSONOnlyArtifactTests(unittest.TestCase):
     def test_bad_batch_sizes_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             for value in (0, -1, MAX_DRUGS_PER_FILE + 1):
-                with self.assertRaisesRegex(ValueError, "between 1 and 5000"):
+                with self.assertRaisesRegex(ValueError, "between 1 and 1000"):
                     partition_records([make_row(1)], Path(tmp) / "out", batch_size=value)
 
     def test_over_artifact_limit_fails_before_write(self):

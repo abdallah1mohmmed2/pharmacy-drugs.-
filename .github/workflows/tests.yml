@@ -17,3 +17,46 @@ jobs:
           python-version: '3.12'
       - name: Run tests without network
         run: python -m unittest discover -s tests -v
+
+  smoke-real-source:
+    name: End-to-end real eg-drugs smoke test
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download upstream catalog and convert twenty records
+        run: python convert.py --download --sample 20 --output-dir ci-sample
+      - name: Verify 96 target keys, real name-derived fields, and audit
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, csv
+          folder = Path('ci-sample')
+          data = json.loads((folder / 'drugs_96_DRAFT.json').read_text(encoding='utf-8'))
+          manifest = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))
+          assert len(data) == 20, f"Expected 20 records, got {len(data)}"
+          assert all(len(x) == 96 and x['is_active'] == 0 for x in data)
+          assert manifest['converted_records'] == 20
+          assert manifest['source_records_total'] >= 20000
+          assert any(x['trade_name_en'] for x in data)
+          assert 'name_derived_nonempty_counts' in manifest
+          with (folder / 'mapping_audit.csv').open(encoding='utf-8-sig') as fp:
+              audit = list(csv.DictReader(fp))
+          assert len(audit) == 20
+          print('Integration verified', len(data), 'products,',
+                manifest['source_records_total'], 'in upstream.')
+          PY
+      - name: Upload CI preview and manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-source-smoke
+          path: ci-sample/
+          retention-days: 7
+          if-no-files-found: warn

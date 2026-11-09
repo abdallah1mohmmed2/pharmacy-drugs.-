@@ -44,6 +44,13 @@ jobs:
           python-version: '3.12'
       - name: Run offline regression tests
         run: python -m unittest discover -s tests -v
+      - name: Restore recent public research cache (14-day per-file TTL)
+        uses: actions/cache@v4
+        with:
+          path: .research_cache
+          key: pharma-research-cache-${{ runner.os }}-v2-${{ github.run_id }}
+          restore-keys: |
+            pharma-research-cache-${{ runner.os }}-v2-
       - name: Convert full upstream source into temporary catalog
         run: |
           python convert.py --download --sample 0 \
@@ -64,6 +71,7 @@ jobs:
         env:
           QUERY: ${{ inputs.query || 'metformin' }}
           MAX_RECORDS: ${{ inputs.max_records || '5' }}
+          OPENFDA_API_KEY: ${{ secrets.OPENFDA_API_KEY }}
         run: |
           python research_batch.py \
             --input catalog_temp/drugs_96_DRAFT.json \

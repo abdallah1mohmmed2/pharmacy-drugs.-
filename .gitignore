@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+outputs/
+output-*/
+clinical_outputs/
+clinical-review-*/
+.label_cache/
+*.part
+.DS_Store

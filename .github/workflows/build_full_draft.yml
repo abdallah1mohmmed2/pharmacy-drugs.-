@@ -1,0 +1,56 @@
+name: Build FULL eg-drugs draft catalog
+
+on:
+  # Creation/updates to this file produce a full draft once, not every code push.
+  push:
+    paths:
+      - '.github/workflows/build_full_draft.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-catalog:
+    name: Download, validate and convert ALL upstream drugs
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run regression tests
+        run: python -m unittest discover -s tests -v
+      - name: Convert entire public source to 96 fields
+        run: |
+          python convert.py --download --sample 0 \
+            --expected-min-rows 20000 --output-dir full_catalog
+      - name: Validate full export and source provenance
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('full_catalog')
+          data = json.loads((root / 'drugs_96_DRAFT.json').read_text(encoding='utf-8'))
+          manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
+          assert len(data) == manifest['source_records_total']
+          assert len(data) >= 20000
+          assert manifest['converted_records'] == len(data)
+          assert not manifest['is_sample']
+          assert all(row['is_active'] == 0 and len(row) == 96 for row in data)
+          assert any(row['dosage_form'] != 'OTHER' for row in data)
+          assert any(row['strength_text'] for row in data)
+          print('FULL-DRAFT-VALIDATED:', len(data), 'drugs;',
+                'name-derived field counts:', manifest['name_derived_nonempty_counts'])
+          PY
+      - name: Upload FULL draft and complete audit (NOT clinically approved)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-eg-drugs-96-fields-DRAFT
+          path: full_catalog/
+          retention-days: 30
+          if-no-files-found: warn

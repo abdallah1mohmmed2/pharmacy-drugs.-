@@ -20,6 +20,7 @@ import uuid
 from urllib.request import urlopen, Request
 from urllib.error import HTTPError, URLError
 from product_name_parser import product_name_fields
+from catalog_details import derive_catalog_details, DETAIL_EXTRA_KEYS
 
 SOURCE_URL = 'https://raw.githubusercontent.com/mahmoudfalous/eg-drugs/main/data/eg_drugs.json'
 REPO_URL = 'https://github.com/mahmoudfalous/eg-drugs'
@@ -37,7 +38,7 @@ RISK_FLAGS = [
     'prescription_restricted', 'has_critical_interactions',
     'is_nephrotoxic', 'neonate_allowed', 'requires_refrigeration', 'protect_from_light',
 ]
-SCHEMA_VERSION = 'v2.1'
+SCHEMA_VERSION = 'v2.2'
 MAX_FILE_BYTES = 150 * 1024 * 1024
 
 
@@ -171,7 +172,7 @@ def write_json_atomic(path, value):
 
 
 def convert(records, defaults, output_dir, source_sha, source_git_sha,
-            sample=0, expected_min_rows=0):
+            sample=0, expected_min_rows=0, include_catalog_details=False):
     if sample < 0:
         raise ValueError('sample cannot be negative')
     chosen = records[:sample] if sample else records
@@ -198,6 +199,9 @@ def convert(records, defaults, output_dir, source_sha, source_git_sha,
     missing_ingredient = 0
     mapped_counts = {v: 0 for v in TEXT_MAPPING.values()}
     parsed_counts = {name: 0 for name in ('dosage_form', 'route', 'strength_text', 'strength_value', 'strength_unit')}
+    catalog_counts = {key: 0 for key in DETAIL_EXTRA_KEYS}
+    catalog_counts.update({'units_per_pack': 0, 'strips_per_pack': 0, 'units_per_strip': 0,
+                           'is_strip_based': 0, 'pharmacologic_class': 0})
     now = datetime.now(timezone.utc).isoformat(timespec='seconds')
     seen_ids = set()
 
@@ -208,6 +212,7 @@ def convert(records, defaults, output_dir, source_sha, source_git_sha,
             'source_row', 'id', 'trade_name_en', 'scientific_name',
             'copied_fields', 'barcode', 'barcode_status', 'source_price_egp',
             'source_company', 'name_derived_fields', 'name_derived_evidence_json',
+            'catalog_fields', 'catalog_evidence_json',
             'unverified_safety_fields', 'requires_clinical_review'
         ])
         writer.writeheader()
@@ -240,6 +245,18 @@ def convert(records, defaults, output_dir, source_sha, source_git_sha,
             record.update(derived)
             for field in derived:
                 parsed_counts[field] += 1
+            # Keep manufacturer_name separate from numeric manufacturer_id.
+            # Preserve source name and unambiguous pack information in optional
+            # two-field extension of the original 96-column schema.
+            catalog_fields, extra_display, catalog_evidence = derive_catalog_details(source)
+            record.update(catalog_fields)
+            for field in catalog_fields:
+                catalog_counts[field] += 1
+            for key in DETAIL_EXTRA_KEYS:
+                if extra_display.get(key):
+                    catalog_counts[key] += 1
+            if include_catalog_details:
+                record.update(extra_display)
             if not record['scientific_name']:
                 missing_ingredient += 1
             barcode = safe_text(source.get('barcode'))
@@ -267,6 +284,8 @@ def convert(records, defaults, output_dir, source_sha, source_git_sha,
                 'source_company': safe_text(source.get('company')),
                 'name_derived_fields': ';'.join(derived.keys()),
                 'name_derived_evidence_json': json.dumps(evidence, ensure_ascii=False),
+                'catalog_fields': ';'.join(catalog_fields.keys()) + (';manufacturer_name;package_description' if include_catalog_details else ''),
+                'catalog_evidence_json': json.dumps(catalog_evidence, ensure_ascii=False),
                 'unverified_safety_fields': ';'.join(RISK_FLAGS),
                 'requires_clinical_review': 'YES',
             })
@@ -276,8 +295,11 @@ def convert(records, defaults, output_dir, source_sha, source_git_sha,
     actual = load_source(draft_path)
     if len(actual) != len(chosen) or len({r['id'] for r in actual}) != len(chosen):
         raise ValueError('Validation failed: output count or IDs differ from source')
-    if any(set(r) != set(defaults) or len(r) != 96 for r in actual):
-        raise ValueError('Validation failed: the output does not have exactly 96 target fields')
+    expected_keys = set(defaults) | (set(DETAIL_EXTRA_KEYS) if include_catalog_details else set())
+    if any(set(r) != expected_keys for r in actual):
+        raise ValueError('Validation failed: output columns differ from the 96 core columns plus optional catalog details')
+    if include_catalog_details and any(r['manufacturer_name'] != safe_text(src.get('company')) for r, src in zip(actual, chosen)):
+        raise ValueError('Validation failed: manufacturer name did not survive source mapping')
     if any(r['scientific_name'] != safe_text(s.get('active')) for r, s in zip(actual, chosen)):
         raise ValueError('Validation failed: source active ingredient mapping mismatch')
     with original_path.open(encoding='utf-8') as fh:
@@ -297,6 +319,9 @@ def convert(records, defaults, output_dir, source_sha, source_git_sha,
         'converted_records': len(chosen),
         'is_sample': sample > 0,
         'target_fields': len(defaults),
+        'export_record_fields': len(defaults) + (len(DETAIL_EXTRA_KEYS) if include_catalog_details else 0),
+        'extra_catalog_fields': list(DETAIL_EXTRA_KEYS) if include_catalog_details else [],
+        'catalog_details_nonempty_counts': catalog_counts,
         'barcodes_valid_check_digit': gtin_valid,
         'barcodes_unverified': gtin_unverified,
         'missing_ingredient': missing_ingredient,
@@ -310,7 +335,10 @@ def convert(records, defaults, output_dir, source_sha, source_git_sha,
             'Draft records are is_active=0; approval must happen outside this converter.',
             'All numerical and boolean clinical defaults are unverified placeholders, including zeros.',
             'Source price is EGP, and was intentionally NOT copied into Yemen retail price.',
-            'Company is a name, NOT a numeric manufacturer_id; stored in audit/original only.',
+            'Manufacturer name is a source string: optional manufacturer_name display field; manufacturer_id remains null until mapped to a verified local manufacturer registry.',
+            'Optional extended schema adds exactly manufacturer_name and package_description; 96 original core columns remain unchanged.',
+            'Package quantities are inferred ONLY when explicit in product name; default strips_per_pack/units_per_strip=1 are unverified placeholders otherwise.',
+            'Source taxonomy suffix may be displayed as pharmacologic_class but is NOT a verified ATC classification.',
             'Source units does not reliably represent tablets per pack; stored in original only.',
             'Form, route and concentration parsed from product name are provisional catalogue metadata, not confirmed patient instructions.',
             'Combination strengths and ambiguous concentrations are intentionally not coerced into single strength_value.',
@@ -331,6 +359,8 @@ def main(argv=None):
     source.add_argument('--source', help='Local copy of source JSON')
     parser.add_argument('--output-dir', default='outputs', help='New output directory (must not exist)')
     parser.add_argument('--sample', type=int, default=0, help='First N records; 0 = ALL records')
+    parser.add_argument('--include-catalog-details', action='store_true',
+                        help='Add manufacturer_name and package_description to the 96 core fields (98 keys total).')
     parser.add_argument('--expected-min-rows', type=int, default=20000,
                         help='Safety threshold for full conversion (default 20000)')
     parser.add_argument('--expected-source-sha256', default='', help='Pin exact source SHA256 (optional)')
@@ -360,9 +390,10 @@ def main(argv=None):
             raise ValueError('Source Git blob SHA1 mismatch — review changed source before converting')
         records = load_source(input_path)
         result = convert(records, load_schema(), target, sha, blob,
-                         sample=args.sample, expected_min_rows=args.expected_min_rows)
+                         sample=args.sample, expected_min_rows=args.expected_min_rows,
+                         include_catalog_details=args.include_catalog_details)
         print('PASS: converted', result['converted_records'], 'of', result['source_records_total'],
-              '| 96 fields each | source SHA256', sha, flush=True)
+              '|', result['export_record_fields'], 'fields each | source SHA256', sha, flush=True)
         print('Generated files:', *(p.name for p in target.iterdir()), sep='\n - ')
         print('IMPORTANT: This is a structural DRAFT, NOT clinically validated.')
         return 0

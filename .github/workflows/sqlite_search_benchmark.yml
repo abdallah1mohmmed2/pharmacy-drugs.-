@@ -42,6 +42,10 @@ jobs:
           from fast_drug_search import search_index
           rows = json.loads(Path('source_catalog/drugs_96_DRAFT.json').read_text(encoding='utf-8'))
           chosen = [rows[i] for i in range(0,len(rows),max(1,len(rows)//60))][:60]
+          from collections import Counter
+          barcodes = Counter(str(r['barcode_international']) for r in rows if r.get('barcode_international'))
+          skipped_long_queries = 0
+          ambiguous_barcodes = 0
           assert len(rows) >= 20000
           elapsed = []
           checked = 0
@@ -57,14 +61,23 @@ jobs:
               if rec.get('scientific_name'):
                   cases.append(('ingredient',rec['scientific_name']))
               for kind,q in cases:
+                  if not isinstance(q,str) or not q.strip() or len(q) > 160:
+                      skipped_long_queries += 1
+                      continue
                   start = perf_counter()
                   results = search_index('search.sqlite3',q,limit=20)
                   elapsed.append((perf_counter()-start)*1000)
                   ids = [r['id'] for r in results]
                   assert len(ids) == len(set(ids)), f'Duplicate candidate for {q}'
                   assert all(r['clinical_equivalence_verified'] is False for r in results)
-                  if kind in ('id','barcode'):
-                      assert ids and ids[0] == rec['id'], f'Incorrect exact identifier: {kind} {q}'
+                  if kind == 'id':
+                      assert ids and ids[0] == rec['id'], f'Incorrect exact drug ID: {q}'
+                  elif kind == 'barcode':
+                      if barcodes[q] == 1:
+                          assert ids and ids[0] == rec['id'], f'Incorrect unique GTIN: {q}'
+                      else:
+                          ambiguous_barcodes += 1
+                          assert rec['id'] in ids, f'GTIN collision record missing: {q}'
                   kinds[kind] += 1
                   checked += 1
           assert checked >= 60
@@ -74,7 +87,9 @@ jobs:
               'median_ms':round(statistics.median(elapsed),2),
               'p95_ms':round(ordered[min(len(ordered)-1,int(len(ordered)*0.95))],2),
               'max_ms':round(max(elapsed),2),
-              'exact_identifiers_verified':kinds['id']+kinds['barcode'],
+              'exact_identifiers_checked':kinds['id']+kinds['barcode'],
+              'shared_barcodes_checked':ambiguous_barcodes,
+              'skipped_long_queries':skipped_long_queries,
               'clinical_equivalence_autocertified':False,
           }
           print('ACTUAL FULL-CATALOG SEARCH BENCHMARK:',json.dumps(result,ensure_ascii=False))

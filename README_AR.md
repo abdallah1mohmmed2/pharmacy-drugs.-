@@ -89,6 +89,31 @@ https://github.com/abdallah1mohmmed2/pharmacy-drugs.-/actions/workflows/fast_dru
 تم التحقق من اتصال البحث بالتحويل والمقارنة على نتائج تشغيل فعلية:
 https://github.com/abdallah1mohmmed2/pharmacy-drugs.-/actions/runs/42715447227
 
+## توليد ملف مراجعة لكل الأدوية (القاعدة الكاملة)
+
+أُضيف `generate_full_reviews.py` ومهمة GitHub Actions مستقلة لتجهيز **ملفات مراجعة لكل دواء في قاعدة البيانات المحوّلة بالكامل**، وليس لخمسة أدوية فقط:
+
+[تشغيل تصدير مراجعات جميع الأدوية](https://github.com/abdallah1mohmmed2/pharmacy-drugs.-/actions/workflows/full_review_catalog.yml)
+
+المهمة تحوّل جميع سجلات المصدر إلى صيغة **98 حقلًا** ثم تنشئ:
+
+- `all_drugs_REVIEW_REQUIRED_NOT_APPROVED.json` — ملف واحد يشمل **جميع** سجلات المراجعة بالترتيب الأصلي؛ لكل دواء `id` و`uuid` والاسم والتركيز والمادة والشركة والعبوة و`converted_record` الكامل (98 حقلًا)، وحقولًا طبية فارغة للمراجعة.
+- `review_batches/batch_001.json` إلى `batch_NNN.json` — نسخ ملفات المراجعة نفسها، مقسمة إلى 300 دواء أو أقل، **بدون قاعدة المصدر الأصلية أو ملفات جانبية داخل ملفات الدفعات المضغوطة**.
+- `review_manifest.json` — تقرير التحقق من العدد وSHA256 وعدد الدفعات والحقول والحالة.
+
+جميع المخرجات `approved=false` و`exact_local_product_label_verified=false` و`review_status=AWAITING_INDEPENDENT_PRODUCT_LEVEL_REVIEW`؛ **ليست موافقات طبية**. يشمل `converted_record` النصوص الأصلية المحوّلة كما هي لمراجعتها، ولا ينبغي اعتبار أي حقل طبي فيه معتمدًا بمجرد وجوده.
+
+يمكن تشغيله محليًا بعد التحويل:
+
+```bash
+python convert.py --download --sample 0 --include-catalog-details --output-dir full_catalog
+python generate_full_reviews.py --catalog full_catalog/drugs_96_DRAFT.json --output-dir reviews_full --expected-min-rows 20000 --batch-size 300
+```
+
+يمكنك تنزيل Artifact **full-drug-reviews-ALL-UNAPPROVED** للملف الكامل و**full-drug-review-batches-300-UNAPPROVED** لأجزاء المراجعة و**full-drug-reviews-manifest-UNAPPROVED** لتقرير سلامة الملفات.
+
+**عند بدء الاعتماد:** لا ترفع ملف المراجعات الكامل كما هو في مدخل `approved_medical_file`؛ بل اختر المستحضرات التي راجعها صيدلي مؤهل بالفعل، واحذف حقول `reviewed_fields` التي لم تُراجع، ثم ضع الموافقات الصحيحة لكل منتج في ملف مستقل (حتى 30 موافقة في تشغيل واحد من خط البحث/الدمج الحالي). لن يقبل البرنامج الاعتماد الآلي أو النصوص الطبية غير المراجعة.
+
 ## ملف مراجعات حقيقي — خمسة مستحضرات ميتفورمين (غير معتمد طبيًا بعد)
 
 أُنشئ ملف `reviews/metformin_5_REVIEW_REQUIRED_NOT_APPROVED.json` من نتائج البحث الفعلية، وهو يتضمن أرقام `id` و`uuid` والأسماء التجارية والتركيزات والأشكال الصيدلانية الخاصة بخمسة مستحضرات حقيقية في قاعدة الأدوية المحوّلة (614 و2576 و2577 و2578 و2579).

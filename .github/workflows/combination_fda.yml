@@ -1,0 +1,53 @@
+name: Official FDA combination label candidates (research only)
+
+on:
+  push:
+    paths:
+      - '.github/workflows/combination_fda.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compounds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Convert full medicine catalog
+        run: |
+          python convert.py --download --sample 0 --include-catalog-details \
+            --expected-min-rows 20000 --output-dir combination_catalog
+      - name: Query 350 frequent multi-ingredient compositions
+        env:
+          OPENFDA_API_KEY: ${{ secrets.OPENFDA_API_KEY }}
+        run: |
+          python -u bulk_combination_fda.py \
+            --catalog combination_catalog/drugs_96_DRAFT.json \
+            --max-combinations 350 \
+            --output combination_evidence/combination_source_labels_REVIEW_ONLY.json
+      - name: Confirm every label remains research only
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('combination_evidence/combination_source_labels_REVIEW_ONLY.json').read_text(encoding='utf-8'))
+          assert x['clinical_use_approved'] is False
+          assert x['no_local_egyptian_brand_approved'] is True
+          for c in x['composition_candidates'].values():
+              assert c['verification_status'] == 'POTENTIAL_US_MULTI_INGREDIENT_LABEL_ONLY'
+              assert all(not t['approved'] and not t['exact_egyptian_product_equivalence_verified'] for t in c['matches'])
+          print('COMBINATION SOURCE RESULTS:',x['matched_combinations'],x['catalog_records_with_candidate_composition'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: combination-US-label-evidence-REVIEW-ONLY
+          path: combination_evidence/combination_source_labels_REVIEW_ONLY.json
+          retention-days: 30
+          if-no-files-found: error

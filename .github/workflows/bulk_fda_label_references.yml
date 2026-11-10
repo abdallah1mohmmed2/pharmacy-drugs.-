@@ -1,0 +1,75 @@
+name: Bulk official US label references for pharmacist review
+
+on:
+  push:
+    paths:
+      - '.github/workflows/bulk_fda_label_references.yml'
+  workflow_dispatch:
+    inputs:
+      max_ingredients:
+        type: choice
+        description: 'Most common single substances to query without relying on guesswork'
+        options: ['850', '500', '100']
+        default: '850'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bulk-label-references-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  profile:
+    name: Retrieve official US label text with source IDs
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Convert current full catalog
+        run: |
+          python convert.py --download --sample 0 \
+            --include-catalog-details --expected-min-rows 20000 \
+            --output-dir catalog_for_label_research
+      - name: Collect bounded openFDA reference candidates for leading ingredients
+        env:
+          OPENFDA_API_KEY: ${{ secrets.OPENFDA_API_KEY }}
+          LIMIT: ${{ inputs.max_ingredients || '850' }}
+        run: |
+          python -u bulk_fda_references.py \
+            --catalog catalog_for_label_research/drugs_96_DRAFT.json \
+            --output official_reference_output/us_label_profiles_REVIEW_ONLY.json \
+            --max-queries "$LIMIT"
+      - name: Validate that references never assert local product verification
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("official_reference_output/us_label_profiles_REVIEW_ONLY.json")
+          d=json.loads(p.read_text(encoding="utf-8"))
+          assert d["no_clinical_approval_claimed"] is True
+          assert d["clinical_review_required"] is True
+          assert d["requested_ingredient_count"] > 0
+          for entry in d["profiles"].values():
+              assert entry["approved_for_Egyptian_products"] is False
+              for label in entry["US_label_references"]:
+                  assert label["medical_use_approved"] is False
+                  assert label["local_Egyptian_product_match_verified"] is False
+                  assert label["source_url"].startswith("https://dailymed.nlm.nih.gov/")
+                  assert label["sections"]
+          print("TESTED:",d["candidate_ingredient_profiles"],"reference ingredient profiles")
+          PY
+      - name: Upload source-linked medical research JSON only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-US-label-profiles-REVIEW-ONLY
+          path: official_reference_output/*.json
+          if-no-files-found: warn
+          retention-days: 30

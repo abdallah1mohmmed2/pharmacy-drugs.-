@@ -1,0 +1,50 @@
+name: Remaining single-ingredient names - final FDA label pass
+
+on:
+  push:
+    paths:
+      - '.github/workflows/third_pass_fda.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research-remaining:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download and convert full Egyptian source
+        run: |
+          python convert.py --download --sample 0 --include-catalog-details \
+            --expected-min-rows 20000 --output-dir final_pass_catalog
+      - name: Search remaining lower-frequency single ingredients
+        env:
+          OPENFDA_API_KEY: ${{ secrets.OPENFDA_API_KEY }}
+        run: |
+          python -u bulk_fda_references.py --catalog final_pass_catalog/drugs_96_DRAFT.json \
+            --output third_pass/references_ingredients_1701_plus_REVIEW_ONLY.json \
+            --offset 1700 --max-queries 850
+      - name: Confirm all US labels are review-only
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('third_pass/references_ingredients_1701_plus_REVIEW_ONLY.json').read_text(encoding='utf-8'))
+          assert data['no_clinical_approval_claimed'] is True
+          assert data['ingredient_query_offset']==1700
+          assert all(not p['approved_for_Egyptian_products'] for p in data['profiles'].values())
+          print('FINAL SINGLE INGREDIENT ROUND:',data['requested_ingredient_count'],data['candidate_ingredient_profiles'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: third-pass-remaining-single-ingredients-REVIEW-ONLY
+          path: third_pass/references_ingredients_1701_plus_REVIEW_ONLY.json
+          retention-days: 30
+          if-no-files-found: error

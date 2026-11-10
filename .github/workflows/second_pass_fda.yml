@@ -1,0 +1,55 @@
+name: Additional unsourced drug ingredients - FDA review-only evidence
+
+on:
+  push:
+    paths:
+      - '.github/workflows/second_pass_fda.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  additional-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Convert full original source
+        run: |
+          python convert.py --download --sample 0 --include-catalog-details --expected-min-rows 20000 --output-dir second_pass_catalog
+      - name: Research next 850 ingredients not covered by first pass
+        env:
+          OPENFDA_API_KEY: ${{ secrets.OPENFDA_API_KEY }}
+        run: |
+          python -u bulk_fda_references.py \
+            --catalog second_pass_catalog/drugs_96_DRAFT.json \
+            --output second_pass/references_ingredients_851_to_1700_REVIEW_ONLY.json \
+            --offset 850 --max-queries 850
+      - name: Check citations and unapproved status
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('second_pass/references_ingredients_851_to_1700_REVIEW_ONLY.json').read_text(encoding='utf-8'))
+          assert d['no_clinical_approval_claimed'] is True
+          assert d['ingredient_query_offset']==850
+          for candidate in d['profiles'].values():
+              assert candidate['approved_for_Egyptian_products'] is False
+              for label in candidate['US_label_references']:
+                  assert label['local_Egyptian_product_match_verified'] is False
+                  assert label['medical_use_approved'] is False
+          print('SECOND PASS:',d['candidate_ingredient_profiles'],'new evidence profiles')
+          PY
+      - name: Upload additional US label citations for reviewer use
+        uses: actions/upload-artifact@v4
+        with:
+          name: second-pass-fda-ingredients-851-1700-REVIEW-ONLY
+          path: second_pass/references_ingredients_851_to_1700_REVIEW_ONLY.json
+          if-no-files-found: error
+          retention-days: 30

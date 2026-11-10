@@ -1,0 +1,109 @@
+name: Full review templates for ALL medicines - NOT APPROVED
+
+on:
+  push:
+    paths:
+      - '.github/workflows/full_review_catalog.yml'
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: 'Drugs per review JSON file (max 300)'
+        type: choice
+        options: ['300', '200', '100']
+        default: '300'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: full-review-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    name: Convert entire catalog and generate unapproved review queue
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run offline integrity and approval gate regression tests
+        run: python -m unittest discover -s tests -v
+      - name: Convert all original medicines to 98-key extended draft
+        run: |
+          python convert.py --download --sample 0 \
+            --include-catalog-details --expected-min-rows 20000 \
+            --output-dir converted_catalog
+      - name: Generate review JSON for EVERY converted medicine
+        env:
+          BATCH_SIZE: ${{ inputs.batch_size || '300' }}
+        run: |
+          python generate_full_reviews.py \
+            --catalog converted_catalog/drugs_96_DRAFT.json \
+            --output-dir review_output \
+            --expected-min-rows 20000 --batch-size "$BATCH_SIZE"
+      - name: Verify no medicine is lost, repeated, activated or marked approved
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('review_output')
+          manifest = json.loads((root / 'review_manifest.json').read_text(encoding='utf-8'))
+          converted = json.loads(Path('converted_catalog/drugs_96_DRAFT.json').read_text(encoding='utf-8'))
+          complete = json.loads((root / 'all_drugs_REVIEW_REQUIRED_NOT_APPROVED.json').read_text(encoding='utf-8'))
+          chunks = sorted((root / 'review_batches').glob('batch_*.json'))
+          assert manifest['review_records'] == manifest['converted_input_records'] == len(converted) == len(complete)
+          assert len(complete) >= 20000
+          assert len(chunks) == manifest['review_batches']
+          assert all(len(x) in (96, 98) for x in converted)
+          ids, uuids = set(), set()
+          checked = 0
+          for file in chunks:
+              batch = json.loads(file.read_text(encoding='utf-8'))
+              assert 1 <= len(batch) <= 300
+              for row in batch:
+                  source = converted[checked]
+                  assert row['id'] == source['id'] and row['uuid'] == source['uuid']
+                  assert row['converted_record'] == source
+                  assert row['approved'] is False and row['exact_local_product_label_verified'] is False
+                  assert all(not value for value in row['reviewed_fields'].values())
+                  assert row['source_url'] == ''
+                  assert source['is_active'] == 0
+                  assert row['id'] not in ids and row['uuid'] not in uuids
+                  ids.add(row['id']); uuids.add(row['uuid'])
+                  checked += 1
+          assert checked == len(complete) == len(ids) == len(uuids)
+          assert manifest['approved_drugs'] == 0
+          assert manifest['clinical_use_allowed'] is False
+          assert len(list((root / 'review_batches').iterdir())) == len(chunks)
+          print('FULL REVIEW QUEUE VERIFIED:', checked, 'rows in', len(chunks),
+                'JSON-only review batches, 0 approved, 0 lost or duplicates')
+          PY
+      - name: Upload full review JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-drug-reviews-ALL-UNAPPROVED
+          path: review_output/all_drugs_REVIEW_REQUIRED_NOT_APPROVED.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+      - name: Upload review batches - each at most 300 drugs
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-drug-review-batches-300-UNAPPROVED
+          path: review_output/review_batches/*.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+      - name: Upload machine-verifiable review manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-drug-reviews-manifest-UNAPPROVED
+          path: review_output/review_manifest.json
+          if-no-files-found: error
+          retention-days: 30

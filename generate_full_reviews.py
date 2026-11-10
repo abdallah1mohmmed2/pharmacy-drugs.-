@@ -78,7 +78,7 @@ def _write_json(path: Path, rows):
         handle.write("\n")
 
 
-def export_full_review_catalog(input_path, output_dir, *, batch_size=MAX_BATCH_SIZE):
+def export_full_review_catalog(input_path, output_dir, *, batch_size=MAX_BATCH_SIZE, expected_min_rows=0):
     """Atomic full review export; never overwrite converter input or existing output."""
     input_path, output_dir = Path(input_path).resolve(), Path(output_dir).resolve()
     if not input_path.is_file():
@@ -90,6 +90,10 @@ def export_full_review_catalog(input_path, output_dir, *, batch_size=MAX_BATCH_S
     if type(batch_size) is not int or not 1 <= batch_size <= MAX_BATCH_SIZE:
         raise ValueError("Review batch size must be an integer between 1 and 300")
     catalog = load_json(input_path)
+    if type(expected_min_rows) is not int or expected_min_rows < 0:
+        raise ValueError("expected_min_rows must be a nonnegative integer")
+    if len(catalog) < expected_min_rows:
+        raise ValueError("Review catalogue smaller than expected minimum")
     entries = make_review_entries(catalog)
     total = len(entries)
     batch_count = (total + batch_size - 1) // batch_size
@@ -172,10 +176,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         result = export_full_review_catalog(
-            args.catalog, args.output_dir, batch_size=args.batch_size
+            args.catalog, args.output_dir, batch_size=args.batch_size,
+            expected_min_rows=args.expected_min_rows,
         )
-        if result["review_records"] < args.expected_min_rows:
-            raise ValueError("Review catalogue smaller than expected minimum")
         print("FULL REVIEW GENERATED:", json.dumps({
             "reviews": result["review_records"],
             "batches": result["review_batches"],

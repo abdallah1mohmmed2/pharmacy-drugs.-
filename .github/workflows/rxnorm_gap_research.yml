@@ -1,0 +1,76 @@
+name: RxNorm ingredient nomenclature gap research
+
+on:
+  push:
+    paths:
+      - '.github/workflows/rxnorm_gap_research.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: rxnorm-gap-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  rxnorm:
+    name: Resolve unresearched ingredient spellings for pharmacist review
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check offline safety and nomenclature logic
+        run: python -m unittest discover -s tests -v
+      - name: Download prior official US label profiles (exclude names already researched)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p prior/first prior/second prior/third
+          gh run download 42783241582 --repo "$REPO" --name official-US-label-profiles-REVIEW-ONLY --dir prior/first
+          gh run download 42811895351 --repo "$REPO" --name second-pass-fda-ingredients-851-1700-REVIEW-ONLY --dir prior/second
+          gh run download 42812749793 --repo "$REPO" --name third-pass-remaining-single-ingredients-REVIEW-ONLY --dir prior/third
+      - name: Convert complete original catalog
+        run: |
+          python convert.py --download --sample 0 --include-catalog-details \
+            --expected-min-rows 20000 --output-dir rxnorm_catalog
+      - name: Search 500 high-priority previously unmapped ingredient names in RxNorm
+        run: |
+          python -u rxnorm_gap_research.py \
+            --catalog rxnorm_catalog/drugs_96_DRAFT.json \
+            --existing-profiles prior/first/*.json prior/second/*.json prior/third/*.json \
+            --max-queries 500 --workers 2 \
+            --output rxnorm_output/ingredient_name_candidates_REVIEW_ONLY.json
+      - name: Verify nothing can be interpreted as locally validated clinical data
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('rxnorm_output/ingredient_name_candidates_REVIEW_ONLY.json')
+          doc=json.loads(p.read_text(encoding='utf-8'))
+          assert doc['clinical_use_authorized'] is False
+          assert doc['local_product_identity_verified'] is False
+          assert len(doc['results']) == doc['queried_ingredient_names']
+          for row in doc['results'].values():
+              assert row['local_egyptian_product_verified'] is False
+              assert row['approved_for_clinical_use'] is False
+              for candidate in row['candidate_identity_matches']:
+                  assert candidate['is_local_product_match_verified'] is False
+                  assert candidate['is_clinically_approved'] is False
+          print('RXNORM NOMENCLATURE TESTED:',doc['names_with_candidate_rxcui'],
+                'named reference candidates from',doc['queried_ingredient_names'],'requests')
+          PY
+      - name: Upload source-linked RxNorm candidates JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: rxnorm-gap-ingredient-names-REVIEW-ONLY
+          path: rxnorm_output/ingredient_name_candidates_REVIEW_ONLY.json
+          if-no-files-found: error
+          retention-days: 30

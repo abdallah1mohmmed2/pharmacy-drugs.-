@@ -1,0 +1,23 @@
+[
+  {
+    "_NOTE": "EXAMPLE TEMPLATE ONLY. Not an approved medicine. Copy EXACT identifiers from converted JSON, verify the locally marketed product, remove placeholder text, and obtain pharmacist review before changing both booleans to true.",
+    "id": 123,
+    "uuid": "REPLACE_WITH_EXACT_CONVERTED_UUID",
+    "trade_name_en": "REPLACE_WITH_EXACT_TRADE_NAME",
+    "scientific_name": "REPLACE_WITH_EXACT_SCIENTIFIC_NAME",
+    "strength_text": "REPLACE_WITH_EXACT_STRENGTH",
+    "dosage_form": "REPLACE_WITH_EXACT_DOSAGE_FORM",
+    "route": "REPLACE_WITH_EXACT_ROUTE",
+    "approved": false,
+    "exact_local_product_label_verified": false,
+    "reviewed_by": "REPLACE_WITH_AUTHORIZED_PHARMACIST_NAME",
+    "review_date": "REPLACE_WITH_YYYY-MM-DD",
+    "source_url": "https://example.org/REPLACE_WITH_EXACT_AUTHORIZED_PRODUCT_LEAFLET",
+    "reviewed_fields": {
+      "contraindications": "REPLACE_WITH_VERIFIED_EXACT_LOCAL_PRODUCT_CONTRAINDICATIONS",
+      "interactions_summary": "REPLACE_WITH_VERIFIED_EXACT_LOCAL_PRODUCT_INTERACTIONS",
+      "side_effects_common": "REPLACE_WITH_VERIFIED_COMMON_EFFECTS_FROM_PRODUCT_LABEL",
+      "side_effects_serious": "REPLACE_WITH_VERIFIED_SERIOUS_EFFECTS_FROM_PRODUCT_LABEL"
+    }
+  }
+]

@@ -121,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Split converted drugs into JSON-only artifacts (<= 300 each)")
     parser.add_argument("--input", required=True, help="Path to converter's drugs_96_DRAFT.json")
     parser.add_argument("--output-dir", default="json_batches", help="New directory containing only batch_NN.json")
-    parser.add_argument("--batch-size", type=int, default=5000)
+    parser.add_argument("--batch-size", type=int, default=MAX_DRUGS_PER_FILE)
     parser.add_argument("--github-output", help="GitHub Actions $GITHUB_OUTPUT file")
     args = parser.parse_args(argv)
     try:

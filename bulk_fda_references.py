@@ -207,15 +207,18 @@ def main(argv=None):
     p.add_argument("--catalog", required=True)
     p.add_argument("--output", required=True)
     p.add_argument("--max-queries", type=int, default=750)
+    p.add_argument("--offset", type=int, default=0, help="Skip ingredients already searched by previous batches")
     args = p.parse_args(argv)
     if not 1 <= args.max_queries <= MAX_QUERIES:
         p.error("max-queries must be 1..850 (stay under anonymous daily API cap)")
+    if args.offset < 0:
+        p.error("offset must be >= 0")
     catalog = json.loads(Path(args.catalog).read_text(encoding="utf-8"))
     if not isinstance(catalog, list) or len(catalog) < 20000:
         p.error("Require full converted catalog of >=20000 items")
     by_ingredient = Counter(single_ingredient(x.get("scientific_name")) for x in catalog)
     by_ingredient.pop("", None)
-    ordered = sorted(by_ingredient, key=lambda x: (-by_ingredient[x], x))[:args.max_queries]
+    ordered = sorted(by_ingredient, key=lambda x: (-by_ingredient[x], x))[args.offset:args.offset + args.max_queries]
     api_key = os.environ.get("OPENFDA_API_KEY", "")
     profiles = {}
     statuses = Counter()
@@ -241,6 +244,7 @@ def main(argv=None):
         "retrieved_utc": datetime.now(timezone.utc).isoformat(),
         "api": API,
         "requested_ingredient_count": len(ordered),
+        "ingredient_query_offset": args.offset,
         "candidate_ingredient_profiles": len(profiles),
         "catalog_drug_records_with_matching_ingredient_names": candidates,
         "request_outcomes": dict(statuses),

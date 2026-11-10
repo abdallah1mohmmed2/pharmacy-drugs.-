@@ -186,7 +186,7 @@ def main(argv=None):
     print("RXNORM FINALE", json.dumps({
         "queried": len(tasks), "with_candidates": statuses["FOUND_REFERENCE"],
         "request_outcomes": dict(statuses),
-    }, flush=True))
+    }), flush=True)
 
 
 if __name__ == "__main__":

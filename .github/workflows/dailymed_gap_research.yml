@@ -1,0 +1,69 @@
+name: DailyMed fallback research for medicines without official references
+
+on:
+  push:
+    paths:
+      - '.github/workflows/dailymed_gap_research.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  fallback:
+    name: Seek primary-source SPL for previously unreferenced substances
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Retrieve official first/second/third previous research artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p earlier
+          gh run download 42783241582 --repo "$REPO" --name official-US-label-profiles-REVIEW-ONLY --dir earlier/first
+          gh run download 42811895351 --repo "$REPO" --name second-pass-fda-ingredients-851-1700-REVIEW-ONLY --dir earlier/second
+          gh run download 42812749793 --repo "$REPO" --name third-pass-remaining-single-ingredients-REVIEW-ONLY --dir earlier/third
+          find earlier -name "*.json" -maxdepth 3 -type f
+      - name: Convert complete current catalog
+        run: |
+          python convert.py --download --sample 0 \
+            --include-catalog-details --expected-min-rows 20000 \
+            --output-dir dailymed_catalog
+      - name: Retrieve DailyMed generic-name candidates and raw US label sections
+        run: |
+          python -u gap_dailymed_research.py \
+            --catalog dailymed_catalog/drugs_96_DRAFT.json \
+            --existing-profiles earlier/first/*.json earlier/second/*.json earlier/third/*.json \
+            --max-queries 450 --workers 3 \
+            --output dailymed_additional/labels_REVIEW_ONLY.json
+      - name: Validate no new claim of local clinical approval
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('dailymed_additional/labels_REVIEW_ONLY.json').read_text(encoding='utf-8'))
+          assert data['all_sources_unapproved'] is True
+          assert data['local_egyptian_product_identity_verified'] is False
+          assert data['searched_unique_ingredient_names'] > 0
+          for record in data['references'].values():
+              assert record['local_product_verified'] is False
+              for label in record['labels']:
+                  assert label['exact_egyptian_product_verified'] is False
+                  assert label['strength_form_route_verified'] is False
+                  assert label['review_status'] == 'RAW_US_LABEL_FOR_HUMAN_COMPARISON'
+          print('VALIDATED',data['candidate_ingredients_with_sources'],'additional DailyMed candidates')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: additional-dailymed-labels-REVIEW-ONLY
+          path: dailymed_additional/labels_REVIEW_ONLY.json
+          retention-days: 30
+          if-no-files-found: error

@@ -13,6 +13,11 @@ on:
         options: ['300']
         default: '300'
         required: true
+      approved_medical_file:
+        description: 'OPTIONAL: repository-relative JSON file of independently pharmacist-approved exact-product reviews (no approvals = original JSON only)'
+        type: string
+        default: ''
+        required: false
 
 permissions:
   contents: read
@@ -57,16 +62,40 @@ jobs:
           print('Verified extended conversion:', len(rows), 'drugs in original order.')
           print('Extra field coverage:', manifest['catalog_details_nonempty_counts'])
           PY
-      - name: Split JSON batches and verify zero repeats, no omissions or altered records
+      - name: Research, compare and merge only manually approved fields; split JSON without duplicates
         id: split
         env:
           BATCH_SIZE: ${{ inputs.batch_size || '300' }}
+          APPROVED_MEDICAL_FILE: ${{ inputs.approved_medical_file || '' }}
+          OPENFDA_API_KEY: ${{ secrets.OPENFDA_API_KEY }}
         run: |
-          python split_artifacts.py \
-            --input full_catalog/drugs_96_DRAFT.json \
-            --output-dir json_batches \
-            --batch-size "$BATCH_SIZE" \
-            --github-output "$GITHUB_OUTPUT"
+          if [ -n "$APPROVED_MEDICAL_FILE" ]; then
+            python - <<'PY'
+          import os
+          from pathlib import Path
+          relative = Path(os.environ["APPROVED_MEDICAL_FILE"])
+          root = Path.cwd().resolve()
+          path = relative.resolve()
+          if relative.is_absolute() or root not in path.parents or path.suffix.lower() != ".json" or not path.is_file():
+              raise SystemExit("Approval input must be an existing .json file inside this checked-out repository")
+          if path.stat().st_size > 1024 * 1024:
+              raise SystemExit("Approval file exceeds the 1 MiB limit")
+          print("Approval file path accepted: repository-local JSON")
+          PY
+            python approved_research_pipeline.py \
+              --catalog full_catalog/drugs_96_DRAFT.json \
+              --approvals "$APPROVED_MEDICAL_FILE" \
+              --output-dir verified_output \
+              --cache-dir .research_cache \
+              --github-output "$GITHUB_OUTPUT"
+            mv verified_output/json_batches json_batches
+          else
+            python split_artifacts.py \
+              --input full_catalog/drugs_96_DRAFT.json \
+              --output-dir json_batches \
+              --batch-size "$BATCH_SIZE" \
+              --github-output "$GITHUB_OUTPUT"
+          fi
       # IMPORTANT: Only json_batches/batch_NN.json are uploaded below. The source
       # database, original records, manifests, caches and CSV reports stay on
       # the transient runner, and are NOT included in any ZIP artifact.
